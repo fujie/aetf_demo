@@ -1,4 +1,4 @@
-module github.com/fujie/claude_session/wallet-instance
+module github.com/fujie/aetf_demo/wallet-instance
 
 go 1.25.0
 
