@@ -1,11 +1,24 @@
 import 'reflect-metadata'
 import { serve } from '@hono/node-server'
 import type { Hono } from 'hono'
-import { CREDENTIAL_CONFIGURATION_ID, CREDENTIAL_VCT, ENTITY, PORTS, STATUS_LIST_API_KEY } from './config.js'
-import { jwksOf, loadOrCreateKey, writeDataFile } from './common/keys.js'
+import { spawn, spawnSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
+import {
+  CREDENTIAL_CONFIGURATION_ID,
+  CREDENTIAL_VCT,
+  DEMO_CONSOLE_PORT,
+  DEMO_CONSOLE_URL,
+  ENTITY,
+  PORTS,
+  STATUS_LIST_API_KEY,
+  WALLET_UI_URL,
+} from './config.js'
+import { DATA_DIR, jwksOf, loadOrCreateKey, writeDataFile } from './common/keys.js'
 import type { FederationEntity, MetadataPolicy } from './federation/entity.js'
 import type { TrustAnchorConfig } from './federation/resolver.js'
 import { createAuthority } from './services/authority.js'
+import { createDemoConsole } from './services/demo-console.js'
 import { createAttributeProvider } from './services/attribute-provider.js'
 import { createIdp } from './services/idp.js'
 import { createIncommonSp } from './services/incommon-sp.js'
@@ -183,8 +196,45 @@ const main = async () => {
     )
   )
 
+  const demoConsole = createDemoConsole()
+  await new Promise<void>((resolve) => serve({ fetch: demoConsole.app.fetch, port: DEMO_CONSOLE_PORT }, () => resolve()))
+  console.log(`  ${'Demo Console'.padEnd(30)} ${DEMO_CONSOLE_URL}`)
+
   await verifier.registerToTrustList()
   console.log('\nAll entities are up. Trust anchor config written to .data/trust-anchor.json')
+  if (process.argv.includes('--with-wallet')) startWebWallet()
+  console.log(`\n▶ Demo console: ${DEMO_CONSOLE_URL}`)
+}
+
+/** Builds and starts the Go web wallet (`wallet-instance serve`) as a child process. */
+const startWebWallet = () => {
+  const dir = join(process.cwd(), 'wallet-instance')
+  const bin = join(dir, process.platform === 'win32' ? 'wallet-instance.exe' : 'wallet-instance')
+  console.log('Building the web wallet (go build)...')
+  const build = spawnSync('go', ['build', '-o', bin, '.'], {
+    cwd: dir,
+    stdio: 'inherit',
+    env: { ...process.env, GOTOOLCHAIN: process.env.GOTOOLCHAIN ?? 'auto' },
+  })
+  if (build.status !== 0 || !existsSync(bin)) {
+    console.error('Could not build the web wallet (Go 1.25+ required). Start it manually: cd wallet-instance && go run . serve')
+    return
+  }
+  const child = spawn(bin, ['serve'], {
+    cwd: dir,
+    stdio: 'inherit',
+    env: {
+      ...process.env,
+      WALLET_DIR: process.env.WALLET_DIR ?? join(DATA_DIR, 'web-wallet'),
+      TRUST_ANCHOR: join(DATA_DIR, 'trust-anchor.json'),
+      DEMO_CONSOLE: DEMO_CONSOLE_URL,
+      WALLET_UI_PORT: new URL(WALLET_UI_URL).port,
+    },
+  })
+  const stop = () => child.kill()
+  process.on('exit', stop)
+  process.on('SIGINT', () => process.exit(0))
+  process.on('SIGTERM', () => process.exit(0))
 }
 
 main().catch((e) => {

@@ -9,6 +9,47 @@
 
 通常の学認SPは対象外です (InCommon SP はフェデレーション間の信頼チェーン確認用のスタブ)。
 
+## デモ (ブラウザで操作)
+
+```bash
+npm install
+npm run demo        # 全エンティティ + Web Wallet (Go) を起動。Go 1.25+ が必要 (GOTOOLCHAIN=auto で自動取得)
+```
+
+起動後 **<http://localhost:7100>** (デモコンソール) を開いてください。
+
+| 画面 | URL | 内容 |
+| --- | --- | --- |
+| デモコンソール | <http://localhost:7100> | 図と同じ構成図 (クリックで各画面へ・稼働状態表示)、手順ガイド、全エンティティの処理がリアルタイムに流れるタイムライン |
+| Web Wallet | <http://localhost:7060> | スマートフォン風のウォレット。登録、受け取り (Issuer の信頼チェーン確認)、提示 (Verifier 認証と開示する属性の選択)、カードごとの状態 (VALID / SUSPENDED / INVALID) |
+| 学認Issuer | <http://localhost:7020> | 機関IdP でログイン (`taro` / `hanako`、パスワード `password`)、Credential Offer、管理画面 (一時停止 / 再開 / 失効) |
+| Verifier | <http://localhost:7040> | 提示リクエスト作成、検証結果 (Wallet Attestation / VP / Issuer / Status List) |
+| Trust List | <http://localhost:7031> | Registrar (RP の一時停止・取消)、LoTE、Access CA |
+| Wallet Provider | <http://localhost:7030> | Wallet Instance の一覧と失効 |
+
+Issuer の Offer 画面と Verifier のリクエスト画面にある **「Web Wallet で開く」** で、QR コードの読み取りの代わりにウォレットが開きます
+(URI を Web Wallet の「読み取り」に貼り付けても同じです)。
+
+デモの流れ (コンソールの「デモシナリオ」と同じ):
+
+1. Web Wallet で「Wallet Provider に登録」(Wallet Attestation の取得)
+2. 学認Issuer でログイン →「Credential Offer を作成」→「Web Wallet で開く」→ 受け取る
+3. Verifier で「提示リクエストを作成」→「Web Wallet で開く」→ 開示する属性を選んで提示 → Verifier に検証結果
+4. Issuer 管理画面で一時停止 / 失効 → 約 10 秒 (Status List の ttl) 後に再提示すると拒否
+5. Trust List で Verifier を一時停止 → ウォレットが Verifier を拒否 (アクセス証明書が CRL で失効)
+6. Wallet Provider で Wallet Instance を失効 → ウォレットで Attestation 再取得が拒否され、発行・提示もできなくなる
+7. InCommon SP の Trust Chain Explorer で信頼チェーンを確認
+
+補足:
+
+- Verifier が要求した属性のチェックを外すと警告が出ます (DCQL を満たさないため Verifier に拒否されます)。
+- Web Wallet のデータは `.data/web-wallet/` にあります。初期化するには、ホームの「クレデンシャルを全て削除」を押すか、このディレクトリを削除してください。
+- 複数のクレデンシャルがある場合、提示されるのは最新のものです (vcknots ウォレットの仕様)。
+
+| デモコンソール | Web Wallet (ホーム) | 受け取り | 提示 |
+| --- | --- | --- | --- |
+| ![console](docs/images/demo-console.png) | ![wallet](docs/images/wallet-home.png) | ![offer](docs/images/wallet-offer.png) | ![request](docs/images/wallet-request.png) |
+
 ## 構成 (図との対応)
 
 ```
@@ -37,7 +78,7 @@
 | Trust List | `http://localhost:7031` | `src/services/trust-list.ts`, `src/trust-list/` | EUDI モデルの Registrar + Access CA (WRPAC Provider) + LoTE Provider。WRPAC Providers の [ETSI TS 119 602 LoTE](#trust-list-etsi-ts-119-602--ts-119-411-8) を配布 |
 | Status List | `http://localhost:7032` | `src/services/status-list.ts` | [Token Status List (draft-ietf-oauth-status-list)](https://datatracker.ietf.org/doc/draft-ietf-oauth-status-list/) の Status Issuer / Status Provider |
 | Verifiers | `http://localhost:7040` | `src/services/verifier.ts` | vcknots VerifierFlow (OID4VP, x509_san_dns + JAR)。起動時に Registrar へ登録し、アクセス証明書 (WRPAC) を Request Object の `x5c` に使用 |
-| Wallet Instance | (CLI) | `wallet-instance/` (Go) | vcknots Go ウォレット + Wallet Attestation / Federation / Trust List 検証 |
+| Wallet Instance | `http://localhost:7060` (Web) / CLI | `wallet-instance/` (Go) | vcknots Go ウォレット + Wallet Attestation / Federation / Trust List 検証 |
 | InCommon SP | `http://localhost:7050` | `src/services/incommon-sp.ts` | I2 配下の RP。Trust Chain Explorer として任意のエンティティの信頼チェーンを表示 |
 
 OpenID Federation 部分は `src/federation/` (TypeScript) と `wallet-instance/federation.go` (Go) にあります。
@@ -156,7 +197,7 @@ sequenceDiagram
   V->>SL: Status List Token 取得・失効確認
 ```
 
-## 動かし方
+## 動かし方 (CLI)
 
 ### 必要なもの
 

@@ -1,3 +1,4 @@
+import { emit } from '../common/events.js'
 import { randomInt } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -206,6 +207,7 @@ export const createStatusList = (opts: {
     l.allocated.add(idx)
     if (body.label) l.labels.set(idx, body.label)
     persist()
+    emit('Status List', 'info', `idx ${idx} を割当 (${body.label ?? ''})`, listUri(l.id))
     return c.json({ status_list: { idx, uri: listUri(l.id) } }, 201)
   })
 
@@ -223,6 +225,7 @@ export const createStatusList = (opts: {
     l.list.set(idx, status)
     snapshot(l)
     persist()
+    emit('Status List', status === StatusType.VALID ? 'ok' : 'info', `idx ${idx} を ${statusTypeName(status)} に更新`, listUri(l.id))
     return c.json({ idx, status, status_name: statusTypeName(status) })
   })
 

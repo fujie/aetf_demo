@@ -81,6 +81,7 @@ type Instance struct {
 	holderKey   *KeyEntry
 
 	reRegistered bool
+	steps        stepRecorder
 }
 
 func openInstance(dir, trustAnchorPath string) (*Instance, error) {
@@ -116,3 +117,6 @@ func (i *Instance) save() error {
 	}
 	return os.WriteFile(filepath.Join(i.dir, "state.json"), raw, 0o600)
 }
+
+// InstanceID is the Wallet Instance identifier assigned by the Wallet Provider.
+func (i *Instance) InstanceID() string { return i.state.WalletInstanceID }

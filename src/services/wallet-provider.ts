@@ -1,3 +1,4 @@
+import { emit } from '../common/events.js'
 import { randomUUID } from 'node:crypto'
 import { Hono } from 'hono'
 import * as jose from 'jose'
@@ -88,12 +89,16 @@ export const createWalletProvider = (opts: {
       revoked: false,
       attestationsIssued: 0,
     })
+    emit('Wallet Provider', 'ok', 'Wallet Instance を登録', id)
     return c.json({ wallet_instance_id: id }, 201)
   })
 
   app.post('/wallet-instances/:id{.+}/revoke', (c) => {
     const inst = instances.get(decodeURIComponent(c.req.param('id')))
-    if (inst) inst.revoked = true
+    if (inst) {
+      inst.revoked = true
+      emit('Wallet Provider', 'info', 'Wallet Instance を失効', inst.id)
+    }
     return c.redirect('/', 303)
   })
 
@@ -112,6 +117,7 @@ export const createWalletProvider = (opts: {
         maxTokenAge: '2m',
       })
     } catch (e) {
+      emit('Wallet Provider', 'error', 'Wallet Attestation の発行を拒否', (e as Error).message)
       return c.json({ error: 'invalid_request', error_description: (e as Error).message }, 400)
     }
     const now = Math.floor(Date.now() / 1000)
@@ -129,6 +135,7 @@ export const createWalletProvider = (opts: {
       ATTESTATION_TYP
     )
     instance.attestationsIssued += 1
+    emit('Wallet Provider', 'ok', 'Wallet Attestation を発行', `${instance.id} (有効期限 ${ATTESTATION_LIFETIME_SEC / 60} 分)`)
     return c.json({ wallet_attestation: attestation })
   })
 

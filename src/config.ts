@@ -30,3 +30,8 @@ export const CREDENTIAL_VCT = `${ENTITY.issuer}/vct/GakuninStudentCredential`
 
 /** Shared secret the Issuer uses for the Status List management API (prototype only). */
 export const STATUS_LIST_API_KEY = process.env.STATUS_LIST_API_KEY ?? 'issuer-status-list-api-key'
+
+/** Web wallet UI (Go, `wallet-instance serve`) and the demo console. */
+export const WALLET_UI_URL = process.env.WALLET_UI_URL ?? `http://${HOST}:7060`
+export const DEMO_CONSOLE_PORT = 7100
+export const DEMO_CONSOLE_URL = `http://${HOST}:${DEMO_CONSOLE_PORT}`

@@ -5,6 +5,7 @@
   "type": "module",
   "description": "IHV prototype: OpenID Federation (eduGAIN / NII / I2) + vcknots Issuer/Verifier + Go Wallet Instance",
   "scripts": {
+    "demo": "tsx src/main.ts --with-wallet",
     "start": "tsx src/main.ts",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test \"test/**/*.spec.ts\""

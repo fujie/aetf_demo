@@ -56,9 +56,9 @@ func (i *Instance) walletProviderMetadata() (*ResolvedChain, map[string]any, err
 func (i *Instance) Register() error {
 	chain, md, err := i.walletProviderMetadata()
 	if err != nil {
-		return fmt.Errorf("wallet provider is not trusted: %w", err)
+		return i.fail("Wallet Provider を信頼できません", fmt.Errorf("wallet provider is not trusted: %w", err))
 	}
-	fmt.Printf("✔ Wallet Provider trusted via OpenID Federation: %s\n", strings.Join(chain.Path, " -> "))
+	i.ok("Wallet Provider を OpenID Federation で確認", "%s", strings.Join(chain.Path, " → "))
 	endpoint, _ := md["wallet_instance_registration_endpoint"].(string)
 	pub := i.instanceKey.PublicKey()
 	var res struct {
@@ -68,7 +68,7 @@ func (i *Instance) Register() error {
 		return err
 	}
 	i.state.WalletInstanceID = res.WalletInstanceID
-	fmt.Printf("✔ Registered Wallet Instance: %s\n", res.WalletInstanceID)
+	i.ok("Wallet Provider に Wallet Instance を登録", "%s", res.WalletInstanceID)
 	return i.save()
 }
 
@@ -105,7 +105,10 @@ func (i *Instance) RefreshAttestation() error {
 			i.state.WalletInstanceID = ""
 			return i.RefreshAttestation()
 		}
-		return err
+		// a revoked / unknown instance must not keep using its previous attestation
+		i.state.WalletAttestation = ""
+		_ = i.save()
+		return i.fail("Wallet Attestation の取得に失敗", err)
 	}
 	jwks, err := JWKSFromMetadata(md)
 	if err != nil {
@@ -115,7 +118,7 @@ func (i *Instance) RefreshAttestation() error {
 		return fmt.Errorf("received wallet attestation is invalid: %w", err)
 	}
 	i.state.WalletAttestation = res.WalletAttestation
-	fmt.Println("✔ Obtained Wallet Attestation from Wallet Provider")
+	i.ok("Wallet Attestation を取得", "Wallet Provider の鍵 (Federation メタデータ) で署名を確認、有効期限 %s", i.AttestationExpiry().Format("15:04:05"))
 	return i.save()
 }
 
@@ -157,12 +160,31 @@ func (t *attestationTransport) RoundTrip(req *http.Request) (*http.Response, err
 		req = req.Clone(req.Context())
 		req.Header.Set(headerAttestation, t.inst.state.WalletAttestation)
 		req.Header.Set(headerAttestationPoP, pop)
-		fmt.Printf("  → %s %s (+ Wallet Attestation, PoP aud=%s)\n", req.Method, req.URL, aud)
+		t.inst.info("Wallet Attestation + PoP を付与して送信", "%s %s (PoP aud=%s)", req.Method, req.URL, aud)
 	}
 	return t.base.RoundTrip(req)
 }
 
 func installAttestationTransport(inst *Instance) {
+	if _, done := http.DefaultTransport.(*attestationTransport); done {
+		return
+	}
 	// The vcknots wallet uses http.Client values with a nil Transport, i.e. http.DefaultTransport.
 	http.DefaultTransport = &attestationTransport{base: http.DefaultTransport, inst: inst}
+}
+
+// AttestationExpiry returns the expiry of the current Wallet Attestation (zero if none).
+func (i *Instance) AttestationExpiry() time.Time {
+	if i.state.WalletAttestation == "" {
+		return time.Time{}
+	}
+	tok, err := jwt.ParseSigned(i.state.WalletAttestation, []jose.SignatureAlgorithm{jose.ES256})
+	if err != nil {
+		return time.Time{}
+	}
+	var c jwt.Claims
+	if tok.UnsafeClaimsWithoutVerification(&c) != nil || c.Expiry == nil {
+		return time.Time{}
+	}
+	return c.Expiry.Time()
 }

@@ -1,3 +1,4 @@
+import { emit } from '../common/events.js'
 import { createHash, webcrypto } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -215,6 +216,7 @@ export const createTrustList = async (opts: {
         maxTokenAge: '5m',
       }))
     } catch (e) {
+      emit('Trust List', 'error', 'RP 登録要求を拒否', (e as Error).message)
       return c.json({ error: 'invalid_request', error_description: (e as Error).message }, 400)
     }
     const p = payload as Record<string, unknown>
@@ -247,6 +249,7 @@ export const createTrustList = async (opts: {
     const publicKey = (await webcrypto.subtle.importKey('jwk', publicJwk as JsonWebKey, { name: 'ECDSA', namedCurve: 'P-256' }, true, ['verify'])) as CryptoKey
     const cert = await accessCa.issue({ ...reg, publicKey })
     console.log(`[trust-list] registered ${clientId}; WRPAC serial ${cert.serialNumber}`)
+    emit('Trust List', 'ok', `Registrar: ${reg.organizationName} を登録し Access CA がアクセス証明書を発行`, `${clientId}, serial ${cert.serialNumber}, policy NCP-l-eudiwrp`)
     return c.json(
       {
         client_id: clientId,
@@ -269,6 +272,7 @@ export const createTrustList = async (opts: {
         accessCa.revokeAllOf(reg.clientId, x509.X509CrlReason.cessationOfOperation)
       }
       reg.status = to
+      emit('Trust List', to === 'active' ? 'ok' : 'info', `Registrar: ${reg.organizationName} の登録を ${to} に変更`, to === 'active' ? 'certificateHold を解除' : `アクセス証明書を CRL で失効 (${to === 'suspended' ? 'certificateHold' : 'cessationOfOperation'})`)
       persistRegistrations()
     }
     return c.redirect('/', 303)

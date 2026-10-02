@@ -1,3 +1,4 @@
+import { emit } from '../common/events.js'
 import { randomUUID } from 'node:crypto'
 import { Hono } from 'hono'
 import * as jose from 'jose'
@@ -172,6 +173,7 @@ export const createIdp = (opts: {
     const redirect = new URL(txn.redirectUri)
     redirect.searchParams.set('code', code)
     if (txn.state) redirect.searchParams.set('state', txn.state)
+    emit('機関IdP', 'ok', `ユーザー ${username} を認証し、${txn.clientName ?? txn.clientId} へ認可コードを発行`, `RP は OpenID Federation で確認: ${txn.trustChainPath.join(' → ')}`)
     return c.redirect(redirect.toString(), 302)
   })
 
@@ -195,6 +197,7 @@ export const createIdp = (opts: {
         maxTokenAge: '5m',
       })
     } catch (e) {
+      emit('機関IdP', 'error', 'RP のクライアント認証 (private_key_jwt) に失敗', (e as Error).message)
       return c.json(
         { error: 'invalid_client', error_description: (e as Error).message },
         401
@@ -215,6 +218,7 @@ export const createIdp = (opts: {
       },
       'JWT'
     )
+    emit('機関IdP', 'ok', `ID Token を発行 (${code.clientId})`, '署名鍵は Federation メタデータ openid_provider.jwks')
     return c.json({ access_token: randomUUID(), token_type: 'Bearer', id_token: idToken })
   })
 

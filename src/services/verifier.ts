@@ -1,3 +1,4 @@
+import { emit } from '../common/events.js'
 import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -22,6 +23,7 @@ import {
   verifyWalletAttestation,
 } from '../common/wallet-attestation.js'
 import { type TrustAnchorConfig, resolveEntityMetadata, resolveTrustChain } from '../federation/resolver.js'
+import { WALLET_UI_URL } from '../config.js'
 import { RP_REGISTRATION_TYP } from './trust-list.js'
 import { federationStatusListKeyResolver } from '../status-list/federation-key-resolver.js'
 import { StatusType, createStatusListClient } from '../status-list/token-status-list.js'
@@ -152,6 +154,7 @@ export const createVerifier = async (opts: {
     )
     verifierFlow = newFlow
     console.log(`[verifier] registered ${clientId}; access certificate serial ${accessCertificate.serialNumber} (${accessCertificate.issuer})`)
+    emit('Verifier', 'ok', 'Registrar に登録しアクセス証明書 (WRPAC) を取得', `serial ${accessCertificate.serialNumber}`)
   }
 
   const app = new Hono()
@@ -218,6 +221,7 @@ export const createVerifier = async (opts: {
       const requestUri = `openid4vp:?${Object.entries(request)
         .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v && typeof v === 'object' ? JSON.stringify(v) : String(v))}`)
         .join('&')}`
+      emit('Verifier', 'info', `提示リクエストを作成 (${state.slice(0, 8)})`, `DCQL: ${REQUESTED_CLAIMS.join(', ')} / x5c にアクセス証明書`)
       results.set(state, {
         state,
         transactionId,
@@ -245,7 +249,9 @@ export const createVerifier = async (opts: {
       .join('')
     const body =
       r.status === 'pending'
-        ? `<section><p>Wallet でこのリクエストを読み取ってください。</p>${await qrSvg(r.requestUri)}
+        ? `<section><p>Wallet でこのリクエストを読み取ってください。</p>
+           <p><a class="btn" href="${esc(`${WALLET_UI_URL}/present?request=${encodeURIComponent(r.requestUri)}`)}" target="_blank">Web Wallet で開く</a></p>
+           ${await qrSvg(r.requestUri)}
            <p>Wallet Instance (CLI) の場合:</p><pre>./wallet-instance present '${esc(r.requestUri)}'</pre>
            <p class="mut">このページは自動更新されます。</p></section>`
         : `<section><h3>${r.status === 'verified' ? '<span class="ok">検証成功</span>' : '<span class="ng">検証失敗</span>'}</h3>
@@ -273,9 +279,15 @@ export const createVerifier = async (opts: {
       return c.json({ error: 'invalid_request', error_description: 'unknown or completed state' }, 400)
     }
     const checks: Check[] = []
+    const report = () =>
+      checks.forEach((ch) =>
+        emit('Verifier', ch.ok ? 'ok' : 'error', `${ch.name}: ${ch.ok ? 'OK' : 'NG'}`, ch.detail.replace(/<br>/g, ' / ').replace(/<[^>]+>/g, '').replace(/&rarr;/g, '→'))
+      )
     const fail = (status: 400 | 401 = 400) => {
       result.status = 'rejected'
       result.checks = checks
+      report()
+      emit('Verifier', 'error', `提示を拒否 (${state.slice(0, 8)})`)
       const last = checks[checks.length - 1]
       const plain = (last?.detail ?? '').replace(/<br>/g, ' / ').replace(/<[^>]+>/g, '').replace(/&rarr;/g, '->').replace(/\s+/g, ' ')
       return c.json({ error: 'access_denied', error_description: `${last?.name}: ${plain}` }, status)
@@ -350,6 +362,8 @@ export const createVerifier = async (opts: {
     }
 
     result.status = 'verified'
+    report()
+    emit('Verifier', 'ok', `提示を受理 (${state.slice(0, 8)})`, Object.entries(sdJwt.disclosed).map(([k, v]) => `${k}=${String(v)}`).join(', '))
     result.checks = checks
     result.disclosed = sdJwt.disclosed
     console.log(`[verifier] presentation ${state} verified:`, sdJwt.disclosed)

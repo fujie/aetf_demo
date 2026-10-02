@@ -1,3 +1,4 @@
+import { emit } from '../common/events.js'
 import { randomUUID } from 'node:crypto'
 import { type Context, Hono } from 'hono'
 import { getCookie, setCookie } from 'hono/cookie'
@@ -30,6 +31,7 @@ import {
 } from '../common/wallet-attestation.js'
 import { createFederationEntity, mountFederationEndpoints } from '../federation/entity.js'
 import { type TrustAnchorConfig, resolveEntityMetadata } from '../federation/resolver.js'
+import { WALLET_UI_URL } from '../config.js'
 import { StatusType, statusTypeName } from '../status-list/token-status-list.js'
 import { ATTRIBUTE_REQUEST_TYP, ATTRIBUTE_RESPONSE_TYP } from './attribute-provider.js'
 
@@ -363,6 +365,7 @@ export const createIssuer = async (opts: {
         if (v !== undefined) claims[k] = v
       }
       s.claims = claims
+      emit('学認Issuer', 'ok', `${String(idToken.sub)} が機関IdPでログイン、属性Providerから属性を取得`, `IdP: ${idp.chain.path.join(' → ')} / 属性Provider: ${ap.chain.path.join(' → ')}`)
       s.idpPath = idp.chain.path
       s.apPath = ap.chain.path
       return c.redirect('/', 302)
@@ -391,10 +394,12 @@ export const createIssuer = async (opts: {
         createdAt: new Date().toISOString(),
       })
       const offerUri = `openid-credential-offer://?credential_offer=${encodeURIComponent(JSON.stringify(offer))}`
+      emit('学認Issuer', 'info', `Credential Offer を作成 (${String(s.claims.eduPersonPrincipalName)})`, 'Pre-Authorized Code Flow (vcknots)')
       return c.html(
         page(
           'Credential Offer',
           `<section><p>Wallet でこの Credential Offer を読み取ってください (有効期限 ${PRE_CODE_TTL_SEC / 60} 分)。</p>
+          <p><a class="btn" href="${esc(`${WALLET_UI_URL}/receive?offer=${encodeURIComponent(offerUri)}`)}" target="_blank">Web Wallet で開く</a></p>
           ${await qrSvg(offerUri)}
           <p>Wallet Instance (CLI) の場合:</p>
           <pre id="cmd">./wallet-instance receive '${esc(offerUri)}'</pre>
@@ -458,7 +463,10 @@ export const createIssuer = async (opts: {
         headers: { Authorization: `Bearer ${opts.statusListApiKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: target }),
       })
-      if (res.ok) issuance.statusValue = target
+      if (res.ok) {
+        issuance.statusValue = target
+        emit('学認Issuer', target === StatusType.VALID ? 'ok' : 'info', `${issuance.user} のクレデンシャルを ${statusTypeName(target)} に変更`, `Status List idx ${issuance.status.idx}`)
+      }
       else console.warn('[issuer] status update failed', res.status, await res.text())
     }
     return c.redirect('/admin', 303)
@@ -491,6 +499,7 @@ export const createIssuer = async (opts: {
     } catch (e) {
       if (e instanceof WalletAttestationError) {
         console.warn('[issuer] wallet attestation rejected:', e.message)
+        emit('学認Issuer', 'error', 'Token リクエストを拒否: Wallet Attestation が無効', e.message)
         return c.json({ error: 'invalid_client', error_description: e.message }, 401)
       }
       throw e
@@ -516,6 +525,7 @@ export const createIssuer = async (opts: {
         byAccessToken.set(accessToken.access_token, issuance)
       }
       console.log(`[issuer] access token issued to wallet ${attestation.clientId} (WP chain: ${attestation.trustChainPath.join(' -> ')})`)
+      emit('学認Issuer', 'ok', 'Wallet Attestation を検証しアクセストークンを発行', `${attestation.walletName ?? ''} ${attestation.clientId} / Wallet Provider: ${attestation.trustChainPath.join(' → ')}`)
       return c.json(accessToken)
     } catch (e) {
       const { body, status } = toErrorResponse(e)
@@ -566,6 +576,7 @@ export const createIssuer = async (opts: {
       })
       issuance.issuedAt = new Date().toISOString()
       console.log(`[issuer] issued ${opts.credentialConfigurationId} for ${issuance.user} (status idx ${issuance.status.idx})`)
+      emit('学認Issuer', 'ok', `SD-JWT VC を発行 (${issuance.user})`, `${opts.credentialConfigurationId}, Status List idx ${issuance.status.idx}`)
       return c.json(credential)
     } catch (e) {
       const { body, status } = toErrorResponse(e)

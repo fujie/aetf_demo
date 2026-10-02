@@ -4,30 +4,20 @@
 //   - Wallet Attestation obtained from the Wallet Provider (trusted via OpenID Federation)
 //     and presented to the Issuer / Verifier as attestation-based client authentication
 //   - Issuer trust check via OpenID Federation before accepting a Credential Offer
-//   - Verifier trust check via the Trust List (whose signer is trusted via OpenID Federation)
+//   - Relying Party authentication with the WRPAC Providers LoTE (ETSI TS 119 602) and
+//     access certificates (ETSI TS 119 411-8)
+//   - Token Status List checks of stored credentials
+//
+// It runs as a CLI or, with `serve`, as a web wallet UI.
 package main
 
 import (
-	"crypto/x509"
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
-	"net/url"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
-	"github.com/go-jose/go-jose/v4"
-	"github.com/trustknots/vcknots/wallet"
-	"github.com/trustknots/vcknots/wallet/credential"
-	"github.com/trustknots/vcknots/wallet/credstore"
-	"github.com/trustknots/vcknots/wallet/credstore/plugins/local"
 	"github.com/trustknots/vcknots/wallet/env"
-	"github.com/trustknots/vcknots/wallet/presenter"
-	"github.com/trustknots/vcknots/wallet/presenter/plugins/oid4vp"
-	"github.com/trustknots/vcknots/wallet/receiver"
-	"github.com/trustknots/vcknots/wallet/serializer/plugins/sdjwtvc"
 )
 
 func getenv(k, def string) string {
@@ -41,17 +31,20 @@ func usage() {
 	fmt.Fprintf(os.Stderr, `usage: wallet-instance <command> [args]
 
 commands:
+  serve                        run the web wallet UI (default http://localhost:7060)
   init                         register with the Wallet Provider and obtain a Wallet Attestation
   receive '<credential offer>' receive a credential (OID4VCI pre-authorized code flow)
   present '<openid4vp uri>' [--claims a,b,c]
                                present the latest credential (OID4VP, SD-JWT VC + KB-JWT)
-  list                         list stored credentials
+  list                         list stored credentials (with Token Status List status)
 
 environment:
   WALLET_DIR       wallet data directory (default ./.wallet)
   TRUST_ANCHOR     trust anchor config  (default ../.data/trust-anchor.json)
   WALLET_PROVIDER  Wallet Provider entity id (default http://localhost:7030)
   TRUST_LIST       Trust List provider entity id (default http://localhost:7031)
+  WALLET_UI_PORT   port of the web wallet UI (default 7060)
+  DEMO_CONSOLE     demo console URL to forward wallet events to (optional)
 `)
 	os.Exit(2)
 }
@@ -70,7 +63,10 @@ func main() {
 	if err == nil {
 		inst.state.WalletProvider = getenv("WALLET_PROVIDER", "http://localhost:7030")
 		inst.state.TrustListProvider = getenv("TRUST_LIST", "http://localhost:7031")
+		inst.steps.console = true
 		switch os.Args[1] {
+		case "serve":
+			err = inst.serve(getenv("WALLET_UI_PORT", "7060"))
 		case "init":
 			err = inst.RefreshAttestation()
 		case "receive":
@@ -99,293 +95,60 @@ func main() {
 	}
 }
 
-func (i *Instance) newWallet(x509Roots *oid4vpRoots) (*wallet.Wallet, error) {
-	store, err := local.NewLocalCredentialStorage(filepath.Join(i.dir, "credstore.db"))
-	if err != nil {
-		return nil, err
-	}
-	credStore, err := credstore.NewCredStoreDispatcher(credstore.WithPlugin(local.Local, store))
-	if err != nil {
-		return nil, err
-	}
-	cfg := wallet.Config{CredStore: credStore}
-	if x509Roots != nil {
-		p, err := presenter.NewPresentationDispatcher(
-			presenter.WithPlugin(presenter.Oid4vp, &oid4vp.Oid4vpPresenter{X509TrustChainRoots: x509Roots.pool}),
-		)
-		if err != nil {
-			return nil, err
-		}
-		cfg.Presenter = p
-	}
-	return wallet.NewWalletWithConfig(cfg)
-}
-
-// ---- receive ---------------------------------------------------------------------------------
-
 func (i *Instance) receive(offerURI string) error {
-	parsed, err := url.Parse(offerURI)
+	preview, err := i.PreviewOffer(offerURI)
 	if err != nil {
 		return err
 	}
-	var offerJSON struct {
-		CredentialIssuer           string                                  `json:"credential_issuer"`
-		CredentialConfigurationIDs []string                                `json:"credential_configuration_ids"`
-		Grants                     map[string]*wallet.CredentialOfferGrant `json:"grants"`
-	}
-	if err := json.Unmarshal([]byte(parsed.Query().Get("credential_offer")), &offerJSON); err != nil {
-		return fmt.Errorf("invalid credential offer: %w", err)
-	}
-
-	// 1. Is the issuer a member of the federation (openid_credential_issuer)?
-	chain, _, err := ResolveEntityType(offerJSON.CredentialIssuer, "openid_credential_issuer", i.trustAnchor)
-	if err != nil {
-		return fmt.Errorf("issuer is not trusted: %w", err)
-	}
-	fmt.Printf("✔ Issuer trusted via OpenID Federation: %s\n", strings.Join(chain.Path, " -> "))
-
-	// 2. Wallet Attestation for attestation-based client authentication at the token endpoint
-	if err := i.EnsureAttestation(); err != nil {
-		return err
-	}
-	installAttestationTransport(i)
-
-	issuerURL, err := url.Parse(offerJSON.CredentialIssuer)
+	saved, err := i.AcceptOffer(preview)
 	if err != nil {
 		return err
 	}
-	w, err := i.newWallet(nil)
+	creds, err := i.Credentials(false)
 	if err != nil {
 		return err
 	}
-	saved, err := w.ReceiveCredential(wallet.ReceiveCredentialRequest{
-		CredentialOffer: &wallet.CredentialOffer{
-			CredentialIssuer:           issuerURL,
-			CredentialConfigurationIDs: offerJSON.CredentialConfigurationIDs,
-			Grants:                     offerJSON.Grants,
-		},
-		Type:            receiver.Oid4vci,
-		Key:             i.holderKey,
-		RequestedFormat: credential.SDJwtVC,
-	})
-	if err != nil {
-		return fmt.Errorf("receive failed: %w", err)
+	for _, c := range creds {
+		if c.ID == saved.Entry.Id {
+			printCredential(c)
+		}
 	}
-	fmt.Printf("✔ Credential received and stored: %s\n", saved.Entry.Id)
-	printCredential(saved.Entry.Raw)
 	return nil
 }
-
-// ---- present ---------------------------------------------------------------------------------
-
-type oid4vpRoots struct{ pool *x509.CertPool }
 
 func (i *Instance) present(requestURI string, claims []string) error {
-	parsed, err := url.Parse(requestURI)
+	prep, err := i.PreparePresentation(requestURI)
 	if err != nil {
 		return err
 	}
-	q := parsed.Query()
-	clientID := q.Get("client_id")
-	if clientID == "" {
-		return fmt.Errorf("client_id missing in authorization request")
-	}
-
-	// 1. Trust anchors of the Access Certificate Authorities from the WRPAC Providers LoTE
-	//    (ETSI TS 119 602), whose signer is trusted via OpenID Federation
-	lote, err := i.LoadWRPACProvidersLoTE()
-	if err != nil {
-		return err
-	}
-	fmt.Printf("✔ WRPAC Providers LoTE verified (ETSI TS 119 602, seq %d, scheme operator %q, signer via %s)\n",
-		lote.SequenceNumber, lote.SchemeOperator, strings.Join(lote.FederationPath, " -> "))
-
-	// 2. Fetch the request object once (the verifier serves it a single time) and hand it to the
-	//    vcknots presenter by value.
-	ru := q.Get("request_uri")
-	if ru == "" {
-		return fmt.Errorf("a signed request object (request_uri) carrying the access certificate is required")
-	}
-	requestObject, err := fetchText(ru)
-	if err != nil {
-		return fmt.Errorf("fetch request object: %w", err)
-	}
-	requestURI = "openid4vp:?" + url.Values{"client_id": {clientID}, "request": {requestObject}}.Encode()
-
-	// 3. Relying Party authentication with its access certificate (ETSI TS 119 411-8)
-	rp, err := lote.AuthenticateRelyingParty(requestObject, clientID)
-	if err != nil {
-		return fmt.Errorf("relying party authentication failed: %w", err)
-	}
-	fmt.Printf("✔ Access certificate (WRPAC) chains to a LoTE trust anchor: %s / %s (%s), policy %s, issued by %s (%s)\n",
-		rp.Organization, rp.CommonName, rp.OrganizationIdentifier, rp.Policy, rp.AccessCA, rp.AccessCAEntity)
 	if len(claims) == 0 {
-		if claims, err = requestedClaims(requestObject); err != nil {
-			return err
-		}
+		claims = prep.Requested
 	}
-	pool := lote.Pool()
-	w, err := i.newWallet(&oid4vpRoots{pool: pool})
-	if err != nil {
-		return err
-	}
-	claims, err = availableClaims(w, claims)
-	if err != nil {
-		return err
-	}
-	fmt.Printf("  disclosing: %s\n", strings.Join(claims, ", "))
-
-	// 4. Wallet Attestation is sent along with the direct_post response
-	if err := i.EnsureAttestation(); err != nil {
-		return err
-	}
-	installAttestationTransport(i)
-
-	// vcknots verifies the request object signature, the x5c path to the LoTE trust anchors and
-	// the revocation status of the access certificate (CRL distribution point)
-	redirect, err := w.PresentCredential(requestURI, i.holderKey, &sdjwtvc.SdJwtVcPresentationOptions{
-		SelectedClaims:    claims,
-		RequireKeyBinding: true,
-	})
-	if err != nil {
-		if strings.Contains(err.Error(), "certificate was revoked") {
-			return fmt.Errorf("relying party authentication failed: access certificate is revoked (CRL of the Access CA): %w", err)
-		}
-		return fmt.Errorf("presentation failed: %w", err)
-	}
-	fmt.Println("✔ Presentation accepted by the Verifier")
-	if redirect != "" {
-		fmt.Printf("  result: %s\n", redirect)
-	}
-	return nil
+	_, err = i.SubmitPresentation(prep, claims)
+	return err
 }
-
-// requestedClaims reads the DCQL query from the request object to pre-select the claims to
-// disclose. The signature is verified afterwards by the vcknots presenter.
-func requestedClaims(requestObject string) ([]string, error) {
-	jws, err := jose.ParseSigned(requestObject, []jose.SignatureAlgorithm{jose.ES256})
-	if err != nil {
-		return nil, err
-	}
-	var ro struct {
-		DCQL struct {
-			Credentials []struct {
-				Claims []struct {
-					Path []any `json:"path"`
-				} `json:"claims"`
-			} `json:"credentials"`
-		} `json:"dcql_query"`
-	}
-	if err := json.Unmarshal(jws.UnsafePayloadWithoutVerification(), &ro); err != nil {
-		return nil, err
-	}
-	var out []string
-	for _, c := range ro.DCQL.Credentials {
-		for _, cl := range c.Claims {
-			if len(cl.Path) > 0 {
-				if s, ok := cl.Path[0].(string); ok {
-					out = append(out, s)
-				}
-			}
-		}
-	}
-	return out, nil
-}
-
-func latestCredential(w *wallet.Wallet) (*wallet.SavedCredential, error) {
-	entries, _, err := w.GetCredentialEntries(wallet.GetCredentialEntriesRequest{})
-	if err != nil {
-		return nil, err
-	}
-	if len(entries) == 0 {
-		return nil, fmt.Errorf("no credentials in the wallet")
-	}
-	sort.Slice(entries, func(a, b int) bool { return entries[a].Entry.ReceivedAt.After(entries[b].Entry.ReceivedAt) })
-	return entries[0], nil
-}
-
-// availableClaims keeps only claims that exist as disclosures in the latest credential.
-func availableClaims(w *wallet.Wallet, wanted []string) ([]string, error) {
-	latest, err := latestCredential(w)
-	if err != nil {
-		return nil, err
-	}
-	_, disclosures := decodeSDJWT(latest.Entry.Raw)
-	var out []string
-	for _, c := range wanted {
-		if _, ok := disclosures[c]; ok {
-			out = append(out, c)
-		}
-	}
-	if len(out) == 0 {
-		return nil, fmt.Errorf("the latest credential has none of the requested claims %v", wanted)
-	}
-	return out, nil
-}
-
-// ---- list --------------------------------------------------------------------------------------
 
 func (i *Instance) list() error {
-	w, err := i.newWallet(nil)
+	creds, err := i.Credentials(true)
 	if err != nil {
 		return err
 	}
-	entries, total, err := w.GetCredentialEntries(wallet.GetCredentialEntriesRequest{})
-	if err != nil {
-		return err
-	}
-	fmt.Printf("%d credential(s)\n", total)
-	for _, e := range entries {
-		fmt.Printf("\n- %s (%s, received %s)\n", e.Entry.Id, e.Entry.MimeType, e.Entry.ReceivedAt.Format("2006-01-02 15:04:05"))
-		printCredential(e.Entry.Raw)
-		payload, _ := decodeSDJWT(e.Entry.Raw)
-		if st, err := i.CheckStatus(payload); err != nil {
-			fmt.Printf("  %-24s ? (%v)\n", "[Token Status List]", err)
+	fmt.Printf("%d credential(s)\n", len(creds))
+	for _, c := range creds {
+		fmt.Printf("\n- %s: %s (received %s)\n", c.ID, c.Display.Name, c.ReceivedAt.Format("2006-01-02 15:04:05"))
+		printCredential(c)
+		if c.Status != nil {
+			fmt.Printf("  %-24s %s (idx=%d, Status Issuer: %s)\n", "[Token Status List]", StatusTypeName(c.Status.Status), c.Status.Idx, strings.Join(c.Status.ChainPath, " -> "))
 		} else {
-			fmt.Printf("  %-24s %s (idx=%d, Status Issuer: %s)\n", "[Token Status List]", StatusTypeName(st.Status), st.Idx, strings.Join(st.ChainPath, " -> "))
+			fmt.Printf("  %-24s ? (%s)\n", "[Token Status List]", c.StatusErr)
 		}
 	}
 	return nil
 }
 
-func decodeSDJWT(raw []byte) (map[string]any, map[string]any) {
-	cf := sdjwtvc.ParseCombinedFormatForPresentation(string(raw))
-	payload := map[string]any{}
-	if parts := strings.Split(cf.SDJWT, "."); len(parts) == 3 {
-		if b, err := base64.RawURLEncoding.DecodeString(parts[1]); err == nil {
-			_ = json.Unmarshal(b, &payload)
-		}
+func printCredential(c *CredentialView) {
+	fmt.Printf("  iss: %v\n  vct: %v\n  status: %v\n", c.Issuer, c.Vct, toJSON(c.Payload["status"]))
+	for _, k := range c.ClaimNames {
+		fmt.Printf("  %-24s %s\n", k, toJSON(c.Disclosures[k]))
 	}
-	disclosures := map[string]any{}
-	for _, d := range cf.Disclosures {
-		b, err := base64.RawURLEncoding.DecodeString(d)
-		if err != nil {
-			continue
-		}
-		var arr []any
-		if json.Unmarshal(b, &arr) == nil && len(arr) == 3 {
-			if name, ok := arr[1].(string); ok {
-				disclosures[name] = arr[2]
-			}
-		}
-	}
-	return payload, disclosures
-}
-
-func printCredential(raw []byte) {
-	payload, disclosures := decodeSDJWT(raw)
-	fmt.Printf("  iss: %v\n  vct: %v\n  status: %v\n", payload["iss"], payload["vct"], toJSON(payload["status"]))
-	keys := make([]string, 0, len(disclosures))
-	for k := range disclosures {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		fmt.Printf("  %-24s %s\n", k, toJSON(disclosures[k]))
-	}
-}
-
-func toJSON(v any) string {
-	b, _ := json.Marshal(v)
-	return string(b)
 }

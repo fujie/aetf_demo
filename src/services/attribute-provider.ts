@@ -1,3 +1,4 @@
+import { emit } from '../common/events.js'
 import { Hono } from 'hono'
 import * as jose from 'jose'
 import { type SigningKey, jwksOf, signJwt, verifyWithJwks } from '../common/keys.js'
@@ -85,6 +86,7 @@ export const createAttributeProvider = (opts: {
       })
       subject = String(payload.sub)
     } catch (e) {
+      emit('属性Provider', 'error', '属性要求を拒否', (e as Error).message)
       return c.json({ error: 'unauthorized_client', error_description: (e as Error).message }, 401)
     }
     const attributes = ATTRIBUTES[subject]
@@ -95,6 +97,7 @@ export const createAttributeProvider = (opts: {
       { iss: entityId, aud: requester, sub: subject, iat: now, exp: now + 120, attributes },
       ATTRIBUTE_RESPONSE_TYP
     )
+    emit('属性Provider', 'ok', `${requester} に ${subject} の属性を提供`, `要求者を OpenID Federation (openid_relying_party) で確認、応答に署名: ${Object.keys(attributes).join(', ')}`)
     return c.body(response, 200, { 'Content-Type': 'application/jwt' })
   })
 
