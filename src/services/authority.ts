@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import type { SigningKey } from '../common/keys.js'
-import { esc, page } from '../common/html.js'
+import { esc, page, escMsg } from '../common/html.js'
 import {
   type SubordinateRegistration,
   createFederationEntity,
@@ -32,7 +32,7 @@ export const createAuthority = (opts: {
     const role = opts.authorityHints?.length ? 'Intermediate Authority' : 'Trust Anchor'
     const rows = [...(entity.subordinates?.values() ?? [])]
       .map(
-        (s) => `<tr><td><a href="${esc(s.entityId)}/">${esc(s.entityId)}</a></td>
+        (s) => `<tr><td><a href="${esc(s.entityId)}/">${escMsg(s.entityId)}</a></td>
           <td>${esc((s.entityTypes ?? []).join(', '))}${s.disabled ? ' <span class="ng">登録停止中</span>' : ''}${s.wrongJwks ? ' <span class="ng">jwks 不正</span>' : ''}${s.expired ? ' <span class="ng">期限切れ</span>' : ''}</td>
           <td><a href="/fetch?sub=${encodeURIComponent(s.entityId)}">Subordinate Statement</a></td>
           <td>${s.metadataPolicy ? `<pre>${esc(JSON.stringify(s.metadataPolicy, null, 1))}</pre>` : ''}</td></tr>`
@@ -43,7 +43,7 @@ export const createAuthority = (opts: {
         `${opts.organizationName} (${role})`,
         `<section><p>Entity ID: <code>${esc(opts.entityId)}</code></p>
         <p><a href="/.well-known/openid-federation">Entity Configuration</a>
-        ${hints.length ? ` / authority_hints: ${hints.map((h) => `<code>${esc(h)}</code>`).join(', ')}` : ''}</p></section>
+        ${hints.length ? ` / authority_hints: ${hints.map((h) => escMsg(h)).join(', ')}` : ''}</p></section>
         <section><h3>Subordinates</h3><table><tr><th>Entity</th><th>Entity types</th><th>Statement</th><th>metadata_policy</th></tr>${rows}</table></section>`
       )
     )

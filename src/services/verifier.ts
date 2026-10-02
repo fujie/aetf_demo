@@ -15,7 +15,7 @@ import {
   initializeVerifierFlow,
 } from '@trustknots/vcknots/verifier'
 import { DATA_DIR, verifyWithJwks, writeDataFile } from '../common/keys.js'
-import { esc, page, qrSvg, trustChainHtml } from '../common/html.js'
+import { esc, page, qrSvg, trustChainHtml, escMsg } from '../common/html.js'
 import { toErrorResponse } from '../common/vcknots-util.js'
 import {
   ATTESTATION_HEADER,
@@ -172,7 +172,7 @@ export const createVerifier = async (opts: {
         `Verifier - ${opts.name}`,
         `<section><p>学認 学生証明書 (SD-JWT VC) の提示を要求します。</p>
         <form method="post" action="/requests"><button>提示リクエストを作成</button></form>
-        <p class="mut">client_id: <code>${esc(clientId)}</code> / Registrar: <a href="${esc(opts.trustListEntityId)}/">${esc(opts.trustListEntityId)}</a></p>
+        <p class="mut">client_id: <code>${esc(clientId)}</code> / Registrar: <a href="${esc(opts.trustListEntityId)}/">${escMsg(opts.trustListEntityId)}</a></p>
         <p class="mut">Access Certificate (WRPAC): ${accessCertificate ? `<code>${esc(accessCertificate.subject)}</code><br>issuer <code>${esc(accessCertificate.issuer)}</code> serial <code>${esc(accessCertificate.serialNumber)}</code>` : '<span class="ng">未登録</span>'}</p>
         <form method="post" action="/register"><button>Registrar へ登録 / 再登録 (Access Certificate 再発行)</button></form></section>
         <section><h3>履歴</h3><table><tr><th>state</th><th>作成</th><th>結果</th></tr>${rows}</table></section>`
@@ -185,7 +185,7 @@ export const createVerifier = async (opts: {
       await registerToTrustList()
       return c.redirect('/', 303)
     } catch (e) {
-      return c.html(page('Error', `<pre class="ng">${esc((e as Error).message)}</pre>`), 500)
+      return c.html(page('Error', `<pre class="ng">${escMsg((e as Error).message)}</pre>`), 500)
     }
   })
 
@@ -307,7 +307,7 @@ export const createVerifier = async (opts: {
         detail: `${esc(att.walletName ?? '')} <code>${esc(att.clientId)}</code><br>Wallet Provider: ${trustChainHtml(att.trustChainPath)}<br>Wallet Instance status: ${esc(att.status.statusName)} (Status List idx ${att.status.idx})`,
       })
     } catch (e) {
-      checks.push({ name: 'Wallet Attestation', ok: false, detail: esc((e as Error).message) })
+      checks.push({ name: 'Wallet Attestation', ok: false, detail: escMsg((e as Error).message) })
       return fail(401)
     }
 
@@ -339,7 +339,7 @@ export const createVerifier = async (opts: {
       if (sdJwt.payload.vct !== opts.vct) throw new Error(`unexpected vct ${String(sdJwt.payload.vct)}`)
       checks.push({ name: 'Issuer (OpenID Federation)', ok: true, detail: trustChainHtml(chain.path) })
     } catch (e) {
-      checks.push({ name: 'Issuer (OpenID Federation)', ok: false, detail: esc((e as Error).message) })
+      checks.push({ name: 'Issuer (OpenID Federation)', ok: false, detail: escMsg((e as Error).message) })
       return fail()
     }
 
@@ -349,7 +349,7 @@ export const createVerifier = async (opts: {
       const st = await statusListClient.check(sdJwt.payload as Record<string, unknown>)
       const chain = st.statusIssuer ? await resolveTrustChain(st.statusIssuer, opts.anchors) : undefined
       const detail = `idx=${st.idx} status=0x${st.status.toString(16).padStart(2, '0')} (${st.statusName})
-        <br><code>${esc(st.uri)}</code> iat=${new Date(st.token.iat * 1000).toISOString()} ttl=${st.token.ttl ?? '-'}s${st.fromCache ? ' (cached)' : ''}
+        <br>${escMsg(st.uri)} iat=${new Date(st.token.iat * 1000).toISOString()} ttl=${st.token.ttl ?? '-'}s${st.fromCache ? ' (cached)' : ''}
         <br>Status Issuer: ${chain ? trustChainHtml(chain.path) : '-'}`
       if (st.status !== StatusType.VALID) {
         checks.push({ name: 'Status List', ok: false, detail })
@@ -357,7 +357,7 @@ export const createVerifier = async (opts: {
       }
       checks.push({ name: 'Status List', ok: true, detail })
     } catch (e) {
-      checks.push({ name: 'Status List', ok: false, detail: esc((e as Error).message) })
+      checks.push({ name: 'Status List', ok: false, detail: escMsg((e as Error).message) })
       return fail()
     }
 

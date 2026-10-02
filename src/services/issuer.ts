@@ -21,7 +21,7 @@ import {
 } from '@trustknots/vcknots/issuer'
 import type { IssueCredentialProvider } from '@trustknots/vcknots/providers'
 import { type SigningKey, jwksOf, signJwt, verifyWithJwks } from '../common/keys.js'
-import { esc, page, qrSvg, trustChainHtml } from '../common/html.js'
+import { esc, page, qrSvg, trustChainHtml, escMsg } from '../common/html.js'
 import { toErrorResponse } from '../common/vcknots-util.js'
 import {
   ATTESTATION_HEADER,
@@ -276,7 +276,7 @@ export const createIssuer = async (opts: {
     try {
       return c.redirect(await oidc.authorizationUrl(opts.idpEntityId), 302)
     } catch (e) {
-      return c.html(page('Error', `<pre class="ng">${esc((e as Error).message)}</pre>`), 500)
+      return c.html(page('Error', `<pre class="ng">${escMsg((e as Error).message)}</pre>`), 500)
     }
   })
 
@@ -324,7 +324,7 @@ export const createIssuer = async (opts: {
       s.apPath = ap.chain.path
       return c.redirect('/', 302)
     } catch (e) {
-      return c.html(page('Error', `<pre class="ng">${esc((e as Error).message)}</pre>`), 500)
+      return c.html(page('Error', `<pre class="ng">${escMsg((e as Error).message)}</pre>`), 500)
     }
   })
 
@@ -391,7 +391,7 @@ export const createIssuer = async (opts: {
           .join(' ')
         return `<tr><td>${esc(i.user)}</td><td>${esc(i.createdAt)}</td><td>${esc(i.issuedAt ?? '未受領')}</td>
         <td>${i.walletClientId ? `<code>${esc(i.walletClientId)}</code><br><span class="mut">${trustChainHtml(i.walletProviderPath ?? [])}</span>` : ''}</td>
-        <td>${i.status ? `<code>${esc(i.status.uri)}</code><br>idx=${i.status.idx}` : ''}</td>
+        <td>${i.status ? `${escMsg(i.status.uri)}<br>idx=${i.status.idx}` : ''}</td>
         <td>${i.status ? `<span class="${value === StatusType.VALID ? 'ok' : 'ng'}">${esc(statusTypeName(value))}</span> ${actions}` : ''}</td></tr>`
       })
       .join('')

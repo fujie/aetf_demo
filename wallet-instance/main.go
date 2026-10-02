@@ -100,7 +100,7 @@ func main() {
 		}
 	}
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "✘ %v\n", err)
+		fmt.Fprintf(os.Stderr, "✘ %s\n", Humanize(err.Error()))
 		os.Exit(1)
 	}
 }

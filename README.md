@@ -36,6 +36,10 @@ npm run demo        # 全エンティティ + Web Wallet (Go) を起動。Go 1.2
 | Trust List | <http://localhost:8731> | Registrar (RP の一時停止・取消)、LoTE、Access CA |
 | Wallet Provider | <http://localhost:8730> | Wallet Instance の一覧と失効 |
 
+画面上のメッセージ (タイムライン、エラー、Trust Chain の経路、Web Wallet の検証ステップなど) では、Entity ID の URL を「学認Issuer」「NII」などの名称で表示します
+(例: `GET NII (/fetch?sub=学認Issuer) -> 404`。名称の定義は `src/config.ts` の `ENTITY_LABELS`、変換は `src/common/names.ts`。
+Web Wallet はデモコンソールの `/api/entity-names` から名称を取得)。「Entity ID」欄やプロトコル上の値は URL のままです。
+
 Issuer の Offer 画面と Verifier のリクエスト画面にある **「Web Wallet で開く」** で、QR コードの読み取りの代わりにウォレットが開きます
 (URI を Web Wallet の「読み取り」に貼り付けても同じです)。
 

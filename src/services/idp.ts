@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { Hono } from 'hono'
 import * as jose from 'jose'
 import { type SigningKey, jwksOf, signJwt, verifyWithJwks } from '../common/keys.js'
-import { esc, page, trustChainHtml } from '../common/html.js'
+import { esc, page, trustChainHtml, escMsg } from '../common/html.js'
 import { createFederationEntity, mountFederationEndpoints } from '../federation/entity.js'
 import { type TrustAnchorConfig, resolveEntityMetadata } from '../federation/resolver.js'
 
@@ -141,7 +141,7 @@ export const createIdp = (opts: {
       return c.html(
         page(
           'Error',
-          `<p class="ng">RP ${esc(clientId)} をフェデレーションで確認できません</p><pre>${esc((e as Error).message)}</pre>`
+          `<p class="ng">RP ${escMsg(clientId)} をフェデレーションで確認できません</p><pre>${escMsg((e as Error).message)}</pre>`
         ),
         400
       )

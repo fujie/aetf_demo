@@ -3,6 +3,7 @@ import { ENTITY, ENTITY_LABELS } from '../config.js'
 import { jwksOf } from '../common/keys.js'
 import { emit } from '../common/events.js'
 import { esc } from '../common/html.js'
+import { humanize } from '../common/names.js'
 import {
   type FederationEntity,
   type MetadataPolicy,
@@ -209,7 +210,7 @@ export const createFederationSettings = (opts: { members: FederationEntity[]; an
           const chain = await resolveTrustChain(id, opts.anchors, { noCache: true })
           return { id, ok: true, detail: chain.path.map(label).join(' → ') }
         } catch (e) {
-          return { id, ok: false, detail: (e as Error).message.replace(/^no valid trust chain for \S+: /, '') }
+          return { id, ok: false, detail: humanize((e as Error).message.replace(/^no valid trust chain for \S+: /, '')) }
         }
       })
     )
@@ -228,7 +229,7 @@ export const createFederationSettings = (opts: { members: FederationEntity[]; an
           .map((r) => {
             const policy = r.metadataPolicy ? JSON.stringify(r.metadataPolicy, null, 2) : ''
             const f = { sup: a.entityId, sub: r.entityId }
-            return `<tr class="${regChanged(a.entityId, r) ? 'chg' : ''}"><td><b>${esc(label(r.entityId))}</b><br><span class="mut">${esc(r.entityId)}</span>${
+            return `<tr class="${regChanged(a.entityId, r) ? 'chg' : ''}"><td><b>${esc(label(r.entityId))}</b>${
               isInitialReg(a.entityId, r.entityId) ? '' : ' <span class="tag">追加</span>'
             }</td>
             <td>${btn('toggle_registration', f, r.disabled ? '停止中 → 再開' : '登録中 → 停止', r.disabled ? 'bad' : '')}</td>
@@ -256,7 +257,7 @@ export const createFederationSettings = (opts: { members: FederationEntity[]; an
           (a) => `<label><input type="checkbox" name="hints" value="${esc(a.entityId)}" ${e.authorityHints?.includes(a.entityId) ? 'checked' : ''}> ${esc(label(a.entityId))}</label>`
         )
         .join(' ')
-      return `<tr class="${entityChanged(e) ? 'chg' : ''}"><td><b>${esc(label(e.entityId))}</b><br><span class="mut">${esc(e.entityId)}</span></td>
+      return `<tr class="${entityChanged(e) ? 'chg' : ''}"><td><b>${esc(label(e.entityId))}</b></td>
         <td><form method="post" action="/federation" class="inl"><input type="hidden" name="op" value="set_hints"><input type="hidden" name="entity" value="${esc(e.entityId)}">${hintBoxes} <button>変更</button></form></td>
         <td>${btn('toggle_ec', { entity: e.entityId }, e.faults.ecDisabled ? '非公開 → 公開' : '公開中 → 非公開に', e.faults.ecDisabled ? 'bad' : '')}</td>
         <td>${btn('toggle_rotate', { entity: e.entityId }, e.faults.rotatedKey ? 'ローテーション済 → 戻す' : '鍵をローテーション', e.faults.rotatedKey ? 'bad' : '')}</td>
@@ -309,7 +310,7 @@ export const createFederationSettings = (opts: { members: FederationEntity[]; an
         emit('Federation 設定', 'info', message)
       } catch (e) {
         ok = false
-        message = (e as Error).message
+        message = humanize((e as Error).message)
       }
       return c.redirect(`/federation?ok=${ok ? 1 : 0}&msg=${encodeURIComponent(message)}`, 303)
     })

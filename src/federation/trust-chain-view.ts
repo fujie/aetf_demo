@@ -1,5 +1,6 @@
 import * as jose from 'jose'
-import { esc } from '../common/html.js'
+import { esc, escMsg } from '../common/html.js'
+import { humanize } from '../common/names.js'
 import type { FederationMetadata, MetadataPolicy } from './entity.js'
 import {
   type ResolvedTrustChain,
@@ -215,7 +216,7 @@ const diagramSvg = (model: Model, leafId: string, path: Set<string>, label: (id:
           [`metadata: ${trunc(Object.keys(node.claims.metadata ?? {}).join(', ') || '-', 30)}`],
         ]
       : node.fetch && !node.fetch.ok
-        ? [['取得失敗', 'tng'], [trunc(node.fetch.error ?? '', 40), 'tng']]
+        ? [['取得失敗', 'tng'], [trunc(humanize(node.fetch.error ?? ''), 40), 'tng']]
         : [['(未取得)', 'tmut']]
     parts.push(`<g><rect x="${p.x}" y="${p.y}" width="${EC_W}" height="${EC_H}" rx="8" class="card ${onPath ? 'onp' : ''}" ${st === 'ng' ? `style="stroke:${COLORS.ng};stroke-width:2.5"` : ''}/>
       <path d="M${p.x} ${p.y + 8}a8 8 0 0 1 8 -8h${EC_W - 16}a8 8 0 0 1 8 8v20h-${EC_W}z" class="ech"/>
@@ -257,7 +258,7 @@ const diagramSvg = (model: Model, leafId: string, path: Set<string>, label: (id:
             `metadata_policy: ${trunc(Object.keys(s.claims.metadata_policy ?? {}).join(', ') || 'なし', 24)}`,
           ],
         ]
-      : [['取得失敗', 'tng'], [trunc(s.fetch?.error ?? '', 42), 'tng']]
+      : [['取得失敗', 'tng'], [trunc(humanize(s.fetch?.error ?? ''), 42), 'tng']]
     parts.push(`<g><rect x="${p.x}" y="${p.y}" width="${SS_W}" height="${EC_H}" rx="8" class="card ${path.has(s.issuer) && path.has(s.entity) ? 'onp' : ''}" ${st === 'ng' ? `style="stroke:${COLORS.ng};stroke-width:2.5"` : ''}/>
       <path d="M${p.x} ${p.y + 8}a8 8 0 0 1 8 -8h${SS_W - 16}a8 8 0 0 1 8 8v20h-${SS_W}z" class="ssh"/>
       <text x="${p.x + 10}" y="${p.y + 19}" class="ht">Subordinate Statement</text>
@@ -286,7 +287,7 @@ const diagramSvg = (model: Model, leafId: string, path: Set<string>, label: (id:
           ['(TA から順にマージして Leaf に適用)'],
           [`entity types: ${trunc(Object.keys(final.resolved).join(', '), 28)}`],
         ]
-      : [[trunc(final.message, 44), 'tng'], [trunc(final.message.slice(43), 44), 'tng']]
+      : [[trunc(humanize(final.message), 44), 'tng'], [trunc(humanize(final.message).slice(43), 44), 'tng']]
     parts.push(`<g><rect x="${x}" y="${y}" width="${SS_W}" height="${EC_H - 40}" rx="8" class="card" style="stroke:${ok ? COLORS.ok : COLORS.ng};stroke-width:2;stroke-dasharray:6 4"/>
       <text x="${x + 10}" y="${y + 24}" class="ft" fill="${ok ? COLORS.ok : COLORS.ng}">${ok ? 'Resolved Metadata' : 'Trust Chain 構築失敗'}</text>
       ${lines(x + 10, y + 50, rows)}${stepNo(final, x + SS_W - 4, y + 4)}</g>`)
@@ -340,8 +341,8 @@ const stepList = (model: Model, rawLabel: (id?: string) => string) => {
         st = e.ok ? 'ok' : 'ng'
         text =
           e.kind === 'ec'
-            ? `${label(e.entity)} の Entity Configuration を取得 <code>GET ${esc(e.url)}</code>`
-            : `${label(e.issuer as string)} から ${label(e.entity)} についての Subordinate Statement を取得 <code>GET ${esc(e.url)}</code>`
+            ? `${label(e.entity)} の Entity Configuration を取得 <code>GET ${escMsg(e.url)}</code>`
+            : `${label(e.issuer as string)} から ${label(e.entity)} についての Subordinate Statement を取得 <code>GET ${escMsg(e.url)}</code>`
         break
       case 'authority_hints':
         text = `${label(e.entity)} の authority_hints を確認 → ${e.hints.length ? e.hints.map((h) => label(h)).join(', ') : '(なし)'}`
@@ -361,10 +362,10 @@ const stepList = (model: Model, rawLabel: (id?: string) => string) => {
         break
       case 'error':
         st = 'ng'
-        text = `Trust Chain を構築できませんでした: ${esc(e.message)}`
+        text = `Trust Chain を構築できませんでした: ${escMsg(e.message)}`
         break
     }
-    const err = (e.type === 'fetch' || e.type === 'verify') && e.error ? `<div class="se">${esc(e.error)}</div>` : ''
+    const err = (e.type === 'fetch' || e.type === 'verify') && e.error ? `<div class="se">${escMsg(e.error)}</div>` : ''
     items.push(`<li class="${st}"><span class="sn2">${n}</span><span class="mk">${st === 'ok' ? '✓' : st === 'ng' ? '✗' : '→'}</span><div>${text}${err}</div></li>`)
   }
   return `<ol class="steps">${items.join('')}</ol>`
@@ -438,7 +439,7 @@ export const trustChainVisualHtml = (
   const metadata = trace.find((e): e is MetadataStage => e.type === 'metadata')
   const head = result
     ? `<h3 class="ok">✓ Trust Chain 検証成功</h3><p>${result.path.map((p) => `<code>${esc(label(p))}</code>`).join(' → ')} (Trust Anchor: ${esc(label(result.trustAnchor))})</p>`
-    : `<h3 class="ng">✗ Trust Chain 検証失敗</h3><pre>${esc(error ?? '')}</pre>`
+    : `<h3 class="ng">✗ Trust Chain 検証失敗</h3><pre>${escMsg(error ?? '')}</pre>`
   return `<section>${head}
     <h4>① フェデレーション上の解決経路</h4>
     <p class="mut">Leaf から authority_hints をたどって上位エンティティの Entity Configuration を取得し、上位の fetch エンドポイントから Subordinate Statement を取得します。

@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import { ENTITY, ENTITY_LABELS, WALLET_UI_URL } from '../config.js'
-import { esc, page } from '../common/html.js'
+import { esc, page, escMsg } from '../common/html.js'
 import { type DemoEvent, clearEvents, emit, eventsAfter } from '../common/events.js'
 import type { TrustAnchorConfig } from '../federation/resolver.js'
 import { TRUST_CHAIN_VIEW_CSS, resolveWithTrace, trustChainVisualHtml } from '../federation/trust-chain-view.js'
@@ -247,7 +247,7 @@ export const createDemoConsole = (opts: {
     const anchorId = opts.anchors[0]?.entityId
     const options = Object.entries(ENTITY_LABELS)
       .filter(([id]) => id !== anchorId)
-      .map(([id, name]) => `<option value="${esc(id)}" ${id === target ? 'selected' : ''}>${esc(name)} — ${esc(id)}</option>`)
+      .map(([id, name]) => `<option value="${esc(id)}" ${id === target ? 'selected' : ''}>${esc(name)}</option>`)
       .join('')
     const traced = await resolveWithTrace(target, opts.anchors)
     return c.html(
@@ -255,11 +255,13 @@ export const createDemoConsole = (opts: {
         'Trust Chain Visualizer',
         `<style>main{max-width:1280px}${TRUST_CHAIN_VIEW_CSS}</style>
         <section><form method="get">解決するエンティティ: <select name="entity">${options}</select> <button>Trust Chain を解決</button></form>
-        <p class="mut">Trust Anchor: <code>${esc(anchorId)}</code> (公開鍵は事前設定)。OpenID Federation 1.0 の手順でボトムアップに Trust Chain を構築・検証し、その過程をトレースして描画します (キャッシュは使いません)。</p></section>
+        <p class="mut">Trust Anchor: ${escMsg(anchorId)} (公開鍵は事前設定)。OpenID Federation 1.0 の手順でボトムアップに Trust Chain を構築・検証し、その過程をトレースして描画します (キャッシュは使いません)。</p></section>
         ${trustChainVisualHtml(target, traced, ENTITY_LABELS)}`
       )
     )
   })
+  /** Display names of entity identifiers (used by the Go web wallet). */
+  app.get('/api/entity-names', (c) => c.json(ENTITY_LABELS))
   app.get('/api/events', (c) => c.json(eventsAfter(Number(c.req.query('after') ?? 0))))
   app.delete('/api/events', (c) => {
     clearEvents()

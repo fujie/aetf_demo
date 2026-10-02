@@ -30,9 +30,17 @@ func newID() string {
 }
 
 var funcs = template.FuncMap{
-	"join":  strings.Join,
-	"chain": func(p []string) string { return strings.Join(p, " → ") },
-	"time":  func(t time.Time) string { return t.Local().Format("01/02 15:04:05") },
+	"join": strings.Join,
+	"chain": func(p []string) string {
+		names := make([]string, len(p))
+		for i, id := range p {
+			names[i] = NameOf(id)
+		}
+		return strings.Join(names, " → ")
+	},
+	"name":     NameOf,
+	"humanize": Humanize,
+	"time":     func(t time.Time) string { return t.Local().Format("01/02 15:04:05") },
 	"statusName": func(s *StatusResult) string {
 		if s == nil {
 			return "?"
@@ -326,7 +334,7 @@ const layoutTpl = `<!doctype html><html lang="ja"><head><meta charset="utf-8">
 <header><a href="/">◀</a><span class="t">{{.Title}}</span><span class="mut" style="color:#cfe3ef">GakuNin Wallet</span></header>
 <main>
 {{if .Flash}}<div class="flash">{{.Flash}}</div>{{end}}
-{{if .Error}}<div class="error">✗ {{.Error}}</div>{{end}}
+{{if .Error}}<div class="error">✗ {{humanize .Error}}</div>{{end}}
 {{.Body}}
 </main>
 <nav><a href="/"><b>▤</b>クレデンシャル</a><a href="/scan"><b>⌗</b>読み取り</a><a href="/activity"><b>≡</b>アクティビティ</a>{{if .Console}}<a href="{{.Console}}" target="_blank"><b>◎</b>デモ</a>{{end}}</nav>
@@ -347,7 +355,7 @@ const homeTpl = `
 {{range .Data}}
  <a class="vc" href="/credentials/{{.ID}}" style="background:{{.Display.Background}};color:{{.Display.TextColor}}">
   <div style="display:flex;justify-content:space-between;align-items:start">
-   <div><div class="n">{{.Display.Name}}</div><div class="i">{{if .Display.IssuerName}}{{.Display.IssuerName}}{{else}}{{.Issuer}}{{end}}</div></div>
+   <div><div class="n">{{.Display.Name}}</div><div class="i">{{if .Display.IssuerName}}{{.Display.IssuerName}}{{else}}{{name .Issuer}}{{end}}</div></div>
    <span class="badge {{statusClass .Status}}">{{statusName .Status}}</span>
   </div>
   <div class="h">{{index .Disclosures "name"}}</div>
@@ -375,10 +383,10 @@ const offerTpl = `
 {{$p := index .Data "Preview"}}
 <div class="vc" style="background:{{$p.Display.Background}};color:{{$p.Display.TextColor}}">
  <div class="n">{{$p.Display.Name}}</div><div class="i">{{$p.Display.IssuerName}}</div>
- <div class="i" style="margin-top:14px">発行者 {{$p.Issuer}}</div>
+ <div class="i" style="margin-top:14px">発行者 {{name $p.Issuer}}</div>
 </div>
 <div class="card"><h2>発行者</h2>
- <table><tr><th>Issuer</th><td><code>{{$p.Issuer}}</code></td></tr>
+ <table><tr><th>Issuer</th><td>{{name $p.Issuer}}</td></tr>
  <tr><th>信頼チェーン</th><td><span class="badge ok" style="background:#dafbe1">OpenID Federation</span><div class="mut" style="margin-top:4px">{{chain $p.IssuerChain}}</div></td></tr>
  <tr><th>種別</th><td>{{join $p.ConfigurationID ", "}}</td></tr></table>
 </div>
@@ -436,7 +444,7 @@ const credentialTpl = `
 </table></div>
 <div class="card"><h2>状態 (Token Status List)</h2>
  {{with $c.Status}}<table><tr><th>状態</th><td><span class="badge {{statusClass $c.Status}}" style="border:1px solid #d0d7de">{{statusName $c.Status}}</span></td></tr>
-  <tr><th>idx</th><td>{{.Idx}}</td></tr><tr><th>Status List</th><td><code>{{.URI}}</code></td></tr>
+  <tr><th>idx</th><td>{{.Idx}}</td></tr><tr><th>Status List</th><td>{{humanize .URI}}</td></tr>
   <tr><th>Status Issuer</th><td class="mut">{{chain .ChainPath}}</td></tr></table>
  {{else}}<div class="error">{{$c.StatusErr}}</div>{{end}}
 </div>

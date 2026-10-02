@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import { DATA_DIR, type SigningKey, jwksOf, signJwt, writeDataFile } from '../common/keys.js'
-import { esc, page } from '../common/html.js'
+import { esc, page, escMsg } from '../common/html.js'
 import { createFederationEntity, mountFederationEndpoints } from '../federation/entity.js'
 import {
   type Bits,
@@ -179,7 +179,7 @@ export const createStatusList = (opts: {
           .reverse()
           .slice(0, 10)
           .join('<br>')
-        return `<section><h3>Status List <code>${esc(listUri(l.id))}</code></h3>
+        return `<section><h3>Status List <code>${escMsg(listUri(l.id))}</code></h3>
           <p class="mut">owner: ${esc(l.owner)} / bits=${l.list.bits} / size=${l.list.size} / ttl=${TTL_SEC}s /
           <a href="/lists/${encodeURIComponent(l.id)}">Status List Token</a></p>
           <table><tr><th>idx</th><th>Referenced Token</th><th>status</th></tr>${rows}</table>

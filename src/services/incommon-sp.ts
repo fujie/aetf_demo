@@ -64,7 +64,7 @@ export const createIncommonSp = (opts: {
       }
     }
     const options = opts.knownEntities
-      .map((e) => `<option value="${esc(e)}" ${e === target ? 'selected' : ''}>${esc(e)}</option>`)
+      .map((e) => `<option value="${esc(e)}" ${e === target ? 'selected' : ''}>${esc(ENTITY_LABELS[e] ?? e)}</option>`)
       .join('')
     return c.html(
       page(

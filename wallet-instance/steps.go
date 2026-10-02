@@ -31,6 +31,7 @@ var demoConsoleClient = &http.Client{Timeout: 500 * time.Millisecond}
 
 func (r *stepRecorder) add(s Step) {
 	s.At = time.Now()
+	s.Title, s.Detail = Humanize(s.Title), Humanize(s.Detail)
 	r.mu.Lock()
 	r.current = append(r.current, s)
 	r.history = append(r.history, s)

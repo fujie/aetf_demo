@@ -1,5 +1,6 @@
 import { DEMO_CONSOLE_URL } from '../config.js'
 import QRCode from 'qrcode'
+import { humanize, nameOf } from './names.js'
 
 export const esc = (s: unknown) =>
   String(s ?? '')
@@ -37,4 +38,7 @@ export const qrSvg = async (text: string) =>
   QRCode.toString(text, { type: 'svg', margin: 1, width: 260, errorCorrectionLevel: 'L' })
 
 export const trustChainHtml = (path: string[]) =>
-  path.map((p) => `<code>${esc(p)}</code>`).join(' &rarr; ')
+  path.map((p) => `<span title="${esc(p)}">${esc(nameOf(p))}</span>`).join(' &rarr; ')
+
+/** Escaped message with entity identifiers replaced by display names. */
+export const escMsg = (s: unknown) => esc(humanize(String(s ?? '')))

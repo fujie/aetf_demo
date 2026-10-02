@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { type Context, Hono } from 'hono'
 import { getCookie, setCookie } from 'hono/cookie'
 import { type SigningKey, jwksOf } from '../common/keys.js'
-import { esc, page, trustChainHtml } from '../common/html.js'
+import { esc, page, trustChainHtml, escMsg } from '../common/html.js'
 import { emit } from '../common/events.js'
 import { createOidcRp } from '../common/oidc-rp.js'
 import { createFederationEntity, mountFederationEndpoints } from '../federation/entity.js'
@@ -42,7 +42,7 @@ export const mountFederatedLogin = (
     try {
       return c.redirect(await oidc.authorizationUrl(opts.idpEntityId), 302)
     } catch (e) {
-      return c.html(page('Error', `<pre class="ng">${esc((e as Error).message)}</pre>`), 500)
+      return c.html(page('Error', `<pre class="ng">${escMsg((e as Error).message)}</pre>`), 500)
     }
   })
 
@@ -57,7 +57,7 @@ export const mountFederatedLogin = (
       return c.redirect('/', 302)
     } catch (e) {
       emit(opts.spName, 'error', 'ログインに失敗', (e as Error).message)
-      return c.html(page('Error', `<pre class="ng">${esc((e as Error).message)}</pre>`), 400)
+      return c.html(page('Error', `<pre class="ng">${escMsg((e as Error).message)}</pre>`), 400)
     }
   })
 
