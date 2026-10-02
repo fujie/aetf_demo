@@ -119,8 +119,8 @@ const scenario = () => {
       b: [btn(ENTITY.trustList, 'Trust List を開く')],
     },
     {
-      t: 'Wallet Instance を失効させる',
-      d: 'Wallet Provider で Wallet Instance を「失効」。Wallet Attestation が参照する Status List のエントリが INVALID になり、約 10 秒 (ttl) 後から Issuer は発行を、Verifier は提示を拒否します (ウォレットが保持している発行済み Attestation も無効)。Attestation の再取得も拒否されます。',
+      t: 'Wallet Instance を停止・失効・再有効化する',
+      d: 'Wallet Provider で「一時停止」(Status List: SUSPENDED) または「失効」(INVALID)。約 10 秒 (ttl) 後から Issuer・Verifier が Wallet Attestation を拒否し、ウォレットも Attestation を再取得できなくなります。「再有効化」で元に戻ります (一時停止からは同じエントリを VALID に、失効からは新しいエントリを割り当て。ウォレットは保持中の Attestation の状態を確認して自動で再取得します)。',
       b: [btn(ENTITY.walletProvider, 'Wallet Provider を開く')],
     },
     {

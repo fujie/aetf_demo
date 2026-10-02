@@ -77,6 +77,8 @@ type pageData struct {
 	Error   string
 	Flash   string
 	Console string
+	// Wallet Instance status (Status List entry referenced by the Wallet Attestation)
+	WIStatus *StatusResult
 }
 
 func (i *Instance) render(w http.ResponseWriter, name string, d pageData) {
@@ -107,6 +109,7 @@ func (i *Instance) serve(port string) error {
 		defer st.mu.Unlock()
 		creds, err := i.Credentials(true)
 		d := pageData{Title: "ウォレット", Data: creds, Flash: r.URL.Query().Get("flash")}
+		d.WIStatus, _ = i.AttestationStatus()
 		if err != nil {
 			d.Error = err.Error()
 		}
@@ -336,6 +339,8 @@ const homeTpl = `
   <div class="mut">ID <code>{{short .Inst.InstanceID 60}}</code></div>
   <div class="mut" style="margin-top:4px">Wallet Attestation:
    {{if .Expiry.IsZero}}<b style="color:var(--ng)">なし</b>{{else}}有効期限 {{time .Expiry}}{{end}}</div>
+  {{with .WIStatus}}<div class="mut" style="margin-top:4px">Wallet Instance の状態:
+   <span class="badge {{statusClass .}}" style="border:1px solid #d0d7de">{{statusName .}}</span> (Status List idx {{.Idx}})</div>{{end}}
  {{else}}<div class="mut">未登録です。Wallet Provider に登録して Wallet Attestation を取得してください。</div>{{end}}
  <form method="post" action="/attest"><button class="btn sec">{{if .Inst.InstanceID}}Wallet Attestation を再取得{{else}}Wallet Provider に登録{{end}}</button></form>
 </div>

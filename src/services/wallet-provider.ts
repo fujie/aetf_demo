@@ -1,6 +1,6 @@
 import { emit } from '../common/events.js'
 import { randomUUID } from 'node:crypto'
-import { Hono } from 'hono'
+import { type Context, Hono } from 'hono'
 import * as jose from 'jose'
 import { type SigningKey, jwksOf, signJwt } from '../common/keys.js'
 import { esc, page } from '../common/html.js'
@@ -15,11 +15,22 @@ type WalletInstance = {
   jwk: jose.JWK
   thumbprint: string
   registeredAt: string
-  revoked: boolean
+  state: InstanceState
   attestationsIssued: number
-  /** Token Status List entry referenced from every Wallet Attestation of this instance. */
+  /** Token Status List entry referenced from the Wallet Attestations currently being issued. */
   status?: { idx: number; uri: string }
+  /** Entries of earlier attestation generations (left INVALID after a revocation). */
+  retiredStatus: { idx: number; uri: string }[]
 }
+
+/**
+ * active    -> Status List entry VALID (0x00)
+ * suspended -> entry SUSPENDED (0x02): temporarily disabled, can be reactivated on the same entry
+ * revoked   -> entry INVALID (0x01): terminal for that entry. Reactivation allocates a NEW entry
+ *              for subsequently issued attestations; attestations issued before stay invalid.
+ */
+type InstanceState = 'active' | 'suspended' | 'revoked'
+const STATE_LABEL: Record<InstanceState, string> = { active: '有効', suspended: '一時停止', revoked: '失効' }
 
 const WALLET_STATUS_LIST_ID = 'wallet-provider-1'
 
@@ -30,7 +41,7 @@ const WALLET_STATUS_LIST_ID = 'wallet-provider-1'
  * Entity Configuration so that Issuers / Verifiers can validate it via OpenID Federation.
  * Revocation of a Wallet Instance is published through the Token Status List: every attestation
  * carries `status.status_list` (as for Wallet Unit Attestations in the EUDI Wallet ecosystem), and
- * the entry is set to INVALID when the instance is revoked.
+ * the entry is set to SUSPENDED / INVALID when the instance is suspended / revoked.
  */
 export const createWalletProvider = (opts: {
   entityId: string
@@ -67,22 +78,35 @@ export const createWalletProvider = (opts: {
     },
   })
   const instances = new Map<string, WalletInstance>()
+  const allocateStatus = async (id: string) =>
+    ((await statusApi('/entries', { owner: entityId, label: id })) as { status_list: { idx: number; uri: string } }).status_list
 
   const app = new Hono()
   mountFederationEndpoints(app, entity)
 
   app.get('/', (c) => {
+    const btn = (i: WalletInstance, action: string, label: string) =>
+      `<form style="display:inline" method="post" action="/wallet-instances/${encodeURIComponent(i.id)}/${action}"><button>${label}</button></form>`
+    const actions = (i: WalletInstance) =>
+      i.state === 'active'
+        ? `${btn(i, 'suspend', '一時停止')} ${btn(i, 'revoke', '失効')}`
+        : i.state === 'suspended'
+          ? `${btn(i, 'reactivate', '再有効化')} ${btn(i, 'revoke', '失効')}`
+          : btn(i, 'reactivate', '再有効化 (新しい Status List エントリ)')
     const rows = [...instances.values()]
       .map(
         (i) => `<tr><td><code>${esc(i.id)}</code></td><td>${esc(i.registeredAt)}</td>
-        <td>${i.attestationsIssued}</td><td>${i.status ? `idx ${i.status.idx}` : ''}</td><td>${i.revoked ? '<span class="ng">revoked</span>' : '<span class="ok">active</span>'}</td>
-        <td>${i.revoked ? '' : `<form method="post" action="/wallet-instances/${encodeURIComponent(i.id)}/revoke"><button>失効</button></form>`}</td></tr>`
+        <td>${i.attestationsIssued}</td>
+        <td>${i.status ? `idx ${i.status.idx}` : ''}${i.retiredStatus.length ? `<br><span class="mut">旧: ${i.retiredStatus.map((r) => `idx ${r.idx} (INVALID)`).join(', ')}</span>` : ''}</td>
+        <td class="${i.state === 'active' ? 'ok' : 'ng'}">${STATE_LABEL[i.state]}</td><td>${actions(i)}</td></tr>`
       )
       .join('')
     return c.html(
       page(
         'Wallet Provider',
-        `<section><p>Entity ID: <code>${esc(entityId)}</code> / <a href="/.well-known/openid-federation">Entity Configuration</a></p></section>
+        `<section><p>Entity ID: <code>${esc(entityId)}</code> / <a href="/.well-known/openid-federation">Entity Configuration</a></p>
+        <p class="mut">一時停止は Status List を SUSPENDED に、失効は INVALID にします。一時停止からの再有効化は同じエントリを VALID に戻し、
+        失効からの再有効化は INVALID が終端状態のため新しいエントリを割り当てます (以後に発行する Wallet Attestation から有効。失効前の Attestation は無効のまま)。</p></section>
         <section><h3>Wallet Instances</h3><table><tr><th>ID</th><th>登録日時</th><th>Attestation発行数</th><th>Status List</th><th>状態</th><th></th></tr>${rows}</table></section>`
       )
     )
@@ -101,7 +125,7 @@ export const createWalletProvider = (opts: {
     const id = `${entityId}/instances/${randomUUID()}`
     let status: WalletInstance['status']
     try {
-      status = ((await statusApi('/entries', { owner: entityId, label: id })) as { status_list: { idx: number; uri: string } }).status_list
+      status = await allocateStatus(id)
     } catch (e) {
       return c.json({ error: 'server_error', error_description: (e as Error).message }, 500)
     }
@@ -111,23 +135,50 @@ export const createWalletProvider = (opts: {
       jwk: body.jwk,
       thumbprint,
       registeredAt: new Date().toISOString(),
-      revoked: false,
+      state: 'active',
       attestationsIssued: 0,
+      retiredStatus: [],
     })
     emit('Wallet Provider', 'ok', 'Wallet Instance を登録', id)
     return c.json({ wallet_instance_id: id }, 201)
   })
 
-  app.post('/wallet-instances/:id{.+}/revoke', async (c) => {
-    const inst = instances.get(decodeURIComponent(c.req.param('id')))
-    if (inst && !inst.revoked) {
-      inst.revoked = true
-      // publish the revocation so that already issued Wallet Attestations are rejected too
-      if (inst.status) await statusApi(`/entries/${inst.status.idx}`, { status: 1 }).catch((e) => console.error(e))
-      emit('Wallet Provider', 'info', 'Wallet Instance を失効', `${inst.id} / Status List idx ${inst.status?.idx} を INVALID に更新 (発行済み Wallet Attestation も無効)`)
+  const setStatus = (inst: WalletInstance, status: number) =>
+    inst.status ? statusApi(`/entries/${inst.status.idx}`, { status }) : Promise.resolve()
+
+  const transition = (action: 'suspend' | 'revoke' | 'reactivate') => async (c: Context) => {
+    const inst = instances.get(decodeURIComponent(c.req.param('id') ?? ''))
+    if (!inst) return c.redirect('/', 303)
+    try {
+      if (action === 'suspend' && inst.state === 'active') {
+        await setStatus(inst, 2)
+        inst.state = 'suspended'
+        emit('Wallet Provider', 'info', 'Wallet Instance を一時停止', `${inst.id} / Status List idx ${inst.status?.idx} を SUSPENDED に更新`)
+      } else if (action === 'revoke' && inst.state !== 'revoked') {
+        // publish the revocation so that already issued Wallet Attestations are rejected too
+        await setStatus(inst, 1)
+        inst.state = 'revoked'
+        emit('Wallet Provider', 'info', 'Wallet Instance を失効', `${inst.id} / Status List idx ${inst.status?.idx} を INVALID に更新 (発行済み Wallet Attestation も無効)`)
+      } else if (action === 'reactivate' && inst.state === 'suspended') {
+        await setStatus(inst, 0)
+        inst.state = 'active'
+        emit('Wallet Provider', 'ok', 'Wallet Instance を再有効化', `${inst.id} / Status List idx ${inst.status?.idx} を VALID に戻した (発行済み Wallet Attestation も再び有効)`)
+      } else if (action === 'reactivate' && inst.state === 'revoked') {
+        // INVALID is terminal: retire the entry and allocate a fresh one for new attestations
+        if (inst.status) inst.retiredStatus.push(inst.status)
+        inst.status = await allocateStatus(inst.id)
+        inst.state = 'active'
+        emit('Wallet Provider', 'ok', 'Wallet Instance を再有効化', `${inst.id} / 新しい Status List idx ${inst.status.idx} を割当 (失効前の Wallet Attestation は無効のまま、Wallet は再取得が必要)`)
+      }
+    } catch (e) {
+      console.error(e)
+      emit('Wallet Provider', 'error', 'Wallet Instance の状態変更に失敗', (e as Error).message)
     }
     return c.redirect('/', 303)
-  })
+  }
+  app.post('/wallet-instances/:id{.+}/suspend', transition('suspend'))
+  app.post('/wallet-instances/:id{.+}/revoke', transition('revoke'))
+  app.post('/wallet-instances/:id{.+}/reactivate', transition('reactivate'))
 
   /** Issues a Wallet Attestation. Body: request JWT signed by the instance key. */
   app.post('/wallet-attestations', async (c) => {
@@ -137,7 +188,7 @@ export const createWalletProvider = (opts: {
       const unverified = jose.decodeJwt(String(body.request))
       instance = instances.get(String(unverified.iss))
       if (!instance) throw new Error('unknown wallet instance')
-      if (instance.revoked) throw new Error('wallet instance revoked')
+      if (instance.state !== 'active') throw new Error(`wallet instance ${instance.state}`)
       await jose.jwtVerify(String(body.request), await jose.importJWK(instance.jwk, 'ES256'), {
         typ: ATTESTATION_REQUEST_TYP,
         audience: entityId,

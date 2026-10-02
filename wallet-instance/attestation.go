@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -134,11 +135,40 @@ func (i *Instance) EnsureAttestation() error {
 			// `status` claim) are re-fetched, since Issuers / Verifiers require it
 			if tok.UnsafeClaimsWithoutVerification(&c, &extra) == nil && c.Expiry != nil &&
 				c.Expiry.Time().After(time.Now().Add(time.Minute)) && extra.Status != nil {
-				return nil
+				// The Wallet Provider may have suspended, revoked or re-activated this instance:
+				// check the Status List entry referenced by the cached attestation.
+				st, err := i.AttestationStatus()
+				if err == nil && st.Status == 0 {
+					return nil
+				}
+				if err == nil {
+					i.info("保持中の Wallet Attestation が無効", "Status List idx %d = %s のため再取得します", st.Idx, StatusTypeName(st.Status))
+				}
 			}
 		}
 	}
 	return i.RefreshAttestation()
+}
+
+// AttestationStatus checks the Token Status List entry referenced by the current Wallet
+// Attestation, i.e. whether the Wallet Provider considers this Wallet Instance valid.
+func (i *Instance) AttestationStatus() (*StatusResult, error) {
+	if i.state.WalletAttestation == "" {
+		return nil, fmt.Errorf("no wallet attestation")
+	}
+	parts := strings.Split(i.state.WalletAttestation, ".")
+	if len(parts) != 3 {
+		return nil, fmt.Errorf("invalid wallet attestation")
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return nil, err
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil, err
+	}
+	return i.CheckStatus(payload)
 }
 
 // attestationTransport adds the Wallet Attestation + PoP headers (attestation-based client
