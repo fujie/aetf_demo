@@ -73,6 +73,25 @@ func (i *Instance) Register() error {
 	return i.save()
 }
 
+// EnsureRegistered confirms that the Wallet Provider still knows this Wallet Instance (the
+// registration is idempotent per instance key) and adopts the ID it returns. A registration lost
+// on the Wallet Provider side is restored, and an attestation bound to an old ID is dropped.
+func (i *Instance) EnsureRegistered() error {
+	if i.state.WalletInstanceID == "" {
+		return nil
+	}
+	prev := i.state.WalletInstanceID
+	if err := i.Register(); err != nil {
+		return err
+	}
+	if i.state.WalletInstanceID != prev {
+		i.state.WalletAttestation = ""
+		i.info("Wallet Provider に再登録", "以前の登録 %s が見つからないため新しい ID で登録しました", prev)
+		return i.save()
+	}
+	return nil
+}
+
 // RefreshAttestation obtains a new Wallet Attestation and verifies it with the WP key from the federation.
 func (i *Instance) RefreshAttestation() error {
 	if i.state.WalletInstanceID == "" {
@@ -100,7 +119,7 @@ func (i *Instance) RefreshAttestation() error {
 		WalletAttestation string `json:"wallet_attestation"`
 	}
 	if err := postJSON(endpoint, map[string]any{"request": req}, &res); err != nil {
-		// The prototype Wallet Provider keeps instances in memory; re-register after a restart.
+		// The Wallet Provider no longer knows this instance (e.g. its data was reset): re-register.
 		if strings.Contains(err.Error(), "unknown wallet instance") && !i.reRegistered {
 			i.reRegistered = true
 			i.state.WalletInstanceID = ""

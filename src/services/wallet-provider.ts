@@ -2,7 +2,7 @@ import { emit } from '../common/events.js'
 import { randomUUID } from 'node:crypto'
 import { type Context, Hono } from 'hono'
 import * as jose from 'jose'
-import { type SigningKey, jwksOf, signJwt } from '../common/keys.js'
+import { type SigningKey, jwksOf, readDataFile, signJwt, writeDataFile } from '../common/keys.js'
 import { esc, page } from '../common/html.js'
 import { ATTESTATION_TYP } from '../common/wallet-attestation.js'
 import { createFederationEntity, mountFederationEndpoints } from '../federation/entity.js'
@@ -77,7 +77,13 @@ export const createWalletProvider = (opts: {
       },
     },
   })
-  const instances = new Map<string, WalletInstance>()
+  // persisted under .data so that registered Wallet Instances survive restarts
+  // (the Web Wallet keeps its registration, and the Status List entries are persisted too)
+  const STORE = 'wallet-provider/instances.json'
+  const instances = new Map<string, WalletInstance>(
+    readDataFile<WalletInstance[]>(STORE, []).map((i) => [i.id, i])
+  )
+  const persist = () => writeDataFile(STORE, [...instances.values()])
   const allocateStatus = async (id: string) =>
     ((await statusApi('/entries', { owner: entityId, label: id })) as { status_list: { idx: number; uri: string } }).status_list
 
@@ -139,6 +145,7 @@ export const createWalletProvider = (opts: {
       attestationsIssued: 0,
       retiredStatus: [],
     })
+    persist()
     emit('Wallet Provider', 'ok', 'Wallet Instance を登録', id)
     return c.json({ wallet_instance_id: id }, 201)
   })
@@ -174,6 +181,7 @@ export const createWalletProvider = (opts: {
       console.error(e)
       emit('Wallet Provider', 'error', 'Wallet Instance の状態変更に失敗', (e as Error).message)
     }
+    persist()
     return c.redirect('/', 303)
   }
   app.post('/wallet-instances/:id{.+}/suspend', transition('suspend'))
@@ -214,6 +222,7 @@ export const createWalletProvider = (opts: {
       ATTESTATION_TYP
     )
     instance.attestationsIssued += 1
+    persist()
     emit('Wallet Provider', 'ok', 'Wallet Attestation を発行', `${instance.id} (有効期限 ${ATTESTATION_LIFETIME_SEC / 60} 分)`)
     return c.json({ wallet_attestation: attestation })
   })

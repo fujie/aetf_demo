@@ -59,6 +59,7 @@ Issuer の Offer 画面と Verifier のリクエスト画面にある **「Web W
 
 - Verifier が要求した属性のチェックを外すと警告が出ます (DCQL を満たさないため Verifier に拒否されます)。
 - Web Wallet のデータは `.data/web-wallet/` にあります。初期化するには、ホームの「クレデンシャルを全て削除」を押すか、このディレクトリを削除してください。
+- Wallet Provider の Wallet Instance 一覧と学認Issuer の発行履歴は `.data/` に保存され、サーバーを再起動しても残ります。
 - 複数のクレデンシャルがある場合、提示されるのは最新のものです (vcknots ウォレットの仕様)。
 
 | デモコンソール | Web Wallet (ホーム) | 受け取り | 提示 |
@@ -364,8 +365,10 @@ Trust Chain Visualizer (<http://localhost:8790/trust-chain>) や InCommon SP の
 - すべて `http://localhost` (vcknots の debug / `VCKNOTS_WALLET_HTTP_ALLOWED` を有効化)。本番では HTTPS 必須
 - 鍵 (Federation 鍵・各プロトコル鍵・VC 署名鍵・Verifier 証明書) と Status List は `.data/` に永続化。
   Access CA の鍵・証明書・発行履歴、Registrar の登録情報、LoTE のシーケンス番号も `.data/trust-list/` に永続化。
-  それ以外 (Wallet Instance の登録、発行履歴、ログインセッション) はインメモリで、サーバー再起動で消えます
-  (Wallet Instance は未登録エラー時に自動で再登録し、Verifier は起動時に Registrar へ再登録します)
+  Wallet Provider の Wallet Instance 登録 (状態を含む) は `.data/wallet-provider/`、学認Issuer の発行履歴は `.data/issuer/` に永続化。
+  ログインセッションや Credential Offer の事前認可コードなどはインメモリで、サーバー再起動で消えます。
+  Web Wallet は起動時に Wallet Provider へ登録を確認し、登録が見つからなければ再登録します。
+  全体を初期化するには、サーバーを止めて `.data/` を削除してください (Verifier は起動時に Registrar へ再登録します)
 - Federation: Trust Mark、`constraints`、Resolve endpoint、Historical keys は未実装。metadata_policy は主要オペレーター (value / add / default / one_of / subset_of / superset_of / essential) のみ
 - Entity Type `wallet_provider` / `trust_list_provider` / `status_list_provider` / `attribute_provider` は本プロトタイプ独自 (LoTE の署名者を OpenID Federation で信頼する点も独自の組合せ。EUDI では Wallet に LoTE 署名者のトラストアンカーを帯域外で設定)
 - LoTE の型・サービス種別 URI は ETSI の EU WRPAC Providers 用のものを流用 (`SchemeTerritory` は `JP`)。Registrar・Access CA・LoTE Provider は本来別主体だが、1 エンティティにまとめています

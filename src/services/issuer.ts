@@ -20,7 +20,7 @@ import {
   initializeIssuerFlow,
 } from '@trustknots/vcknots/issuer'
 import type { IssueCredentialProvider } from '@trustknots/vcknots/providers'
-import { type SigningKey, jwksOf, signJwt, verifyWithJwks } from '../common/keys.js'
+import { type SigningKey, jwksOf, readDataFile, signJwt, verifyWithJwks, writeDataFile } from '../common/keys.js'
 import { esc, page, qrSvg, trustChainHtml, escMsg } from '../common/html.js'
 import { toErrorResponse } from '../common/vcknots-util.js'
 import {
@@ -225,7 +225,13 @@ export const createIssuer = async (opts: {
 
   // ---- state ------------------------------------------------------------------------------
   const sessions = new Map<string, UserSession>()
-  const issuances = new Map<string, Issuance>() // by pre-authorized code
+  // by pre-authorized code; persisted under .data so that the admin list (and status changes of
+  // issued credentials) survive restarts
+  const ISSUANCE_STORE = 'issuer/issuances.json'
+  const issuances = new Map<string, Issuance>(
+    readDataFile<Issuance[]>(ISSUANCE_STORE, []).map((i) => [i.preAuthorizedCode, i])
+  )
+  const persistIssuances = () => writeDataFile(ISSUANCE_STORE, [...issuances.values()])
   const byAccessToken = new Map<string, Issuance>()
 
   const app = new Hono()
@@ -347,6 +353,7 @@ export const createIssuer = async (opts: {
         claims: s.claims,
         createdAt: new Date().toISOString(),
       })
+      persistIssuances()
       const offerUri = `openid-credential-offer://?credential_offer=${encodeURIComponent(JSON.stringify(offer))}`
       emit('学認Issuer', 'info', `Credential Offer を作成 (${String(s.claims.eduPersonPrincipalName)})`, 'Pre-Authorized Code Flow (vcknots)')
       return c.html(
@@ -419,6 +426,7 @@ export const createIssuer = async (opts: {
       })
       if (res.ok) {
         issuance.statusValue = target
+        persistIssuances()
         emit('学認Issuer', target === StatusType.VALID ? 'ok' : 'info', `${issuance.user} のクレデンシャルを ${statusTypeName(target)} に変更`, `Status List idx ${issuance.status.idx}`)
       }
       else console.warn('[issuer] status update failed', res.status, await res.text())
@@ -477,6 +485,7 @@ export const createIssuer = async (opts: {
         issuance.walletClientId = attestation.clientId
         issuance.walletProviderPath = attestation.trustChainPath
         byAccessToken.set(accessToken.access_token, issuance)
+        persistIssuances()
       }
       console.log(`[issuer] access token issued to wallet ${attestation.clientId} (WP chain: ${attestation.trustChainPath.join(' -> ')})`)
       emit('学認Issuer', 'ok', 'Wallet Attestation を検証しアクセストークンを発行', `${attestation.walletName ?? ''} ${attestation.clientId} / Wallet Provider: ${attestation.trustChainPath.join(' → ')} / Wallet Instance status: ${attestation.status.statusName}`)
@@ -529,6 +538,7 @@ export const createIssuer = async (opts: {
         proofJwt: { usePreAuth: true },
       })
       issuance.issuedAt = new Date().toISOString()
+      persistIssuances()
       console.log(`[issuer] issued ${opts.credentialConfigurationId} for ${issuance.user} (status idx ${issuance.status.idx})`)
       emit('学認Issuer', 'ok', `SD-JWT VC を発行 (${issuance.user})`, `${opts.credentialConfigurationId}, Status List idx ${issuance.status.idx}`)
       return c.json(credential)

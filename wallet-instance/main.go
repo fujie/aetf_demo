@@ -76,6 +76,9 @@ func main() {
 		inst.steps.console = true
 		switch os.Args[1] {
 		case "serve":
+			if e := inst.EnsureRegistered(); e != nil {
+				fmt.Fprintf(os.Stderr, "warning: could not confirm the Wallet Instance registration: %s\n", Humanize(e.Error()))
+			}
 			err = inst.serve(getenv("WALLET_UI_PORT", strconv.Itoa(basePort()+60)))
 		case "init":
 			err = inst.RefreshAttestation()

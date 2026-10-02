@@ -68,6 +68,12 @@ export const verifyWithJwks = async (
   })
 }
 
+/** Reads a JSON file under DATA_DIR, or returns `fallback` when it does not exist. */
+export const readDataFile = <T>(name: string, fallback: T): T => {
+  const path = join(DATA_DIR, name)
+  return existsSync(path) ? (JSON.parse(readFileSync(path, 'utf-8')) as T) : fallback
+}
+
 export const writeDataFile = (name: string, content: unknown) => {
   const path = join(DATA_DIR, name)
   mkdirSync(dirname(path), { recursive: true })
