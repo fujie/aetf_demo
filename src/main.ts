@@ -20,6 +20,7 @@ import type { FederationEntity, MetadataPolicy } from './federation/entity.js'
 import type { TrustAnchorConfig } from './federation/resolver.js'
 import { createAuthority } from './services/authority.js'
 import { createDemoConsole } from './services/demo-console.js'
+import { createFederationSettings } from './services/federation-settings.js'
 import { createAttributeProvider } from './services/attribute-provider.js'
 import { createIdp } from './services/idp.js'
 import { createIncommonSp } from './services/incommon-sp.js'
@@ -229,7 +230,13 @@ const main = async () => {
     )
   )
 
-  const demoConsole = createDemoConsole({ anchors })
+  const demoConsole = createDemoConsole({
+    anchors,
+    federationSettings: createFederationSettings({
+      anchors,
+      members: [ta, nii, i2, idp, ap, issuer, gakuninSp, walletProvider, trustList, statusList, incommonSp].map((x) => x.entity),
+    }),
+  })
   await new Promise<void>((resolve) => listen(demoConsole.app, DEMO_CONSOLE_PORT, () => resolve()))
   console.log(`  ${'Demo Console'.padEnd(30)} ${DEMO_CONSOLE_URL}`)
 

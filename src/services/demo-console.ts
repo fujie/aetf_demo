@@ -6,6 +6,7 @@ import { type DemoEvent, clearEvents, emit, eventsAfter } from '../common/events
 import type { TrustAnchorConfig } from '../federation/resolver.js'
 import { TRUST_CHAIN_VIEW_CSS, resolveWithTrace, trustChainVisualHtml } from '../federation/trust-chain-view.js'
 import { TRUST_MAP_CSS, trustMapBody } from './trust-map.js'
+import type { createFederationSettings } from './federation-settings.js'
 
 type Box = {
   key: string
@@ -136,6 +137,11 @@ const scenario = () => {
       d: '信頼検証マップで「どのエンティティがどのエンティティを、どの方法 (Federation / Trust List / Wallet Attestation) で検証しているか」を一覧できます。Trust Chain Visualizer では、任意のエンティティについて Entity Configuration / Subordinate Statement の取得と署名検証の流れ、Trust Chain 配列、metadata_policy の適用結果を図で確認できます。InCommon SP の Explorer では I2 (InCommon) 側から見た学認エンティティの解決 (eduGAIN 経由のフェデレーション間信頼) を確認できます。Verifier はフェデレーション外なので解決に失敗する例になります。',
       b: [btn('/trust-map', '信頼検証マップ'), btn('/trust-chain', 'Trust Chain Visualizer'), btn(ENTITY.incommonSp, 'InCommon SP Explorer')],
     },
+    {
+      t: 'Trust Chain を壊してみる',
+      d: 'フェデレーション設定で、登録の停止・Subordinate Statement の誤った鍵や期限切れ・metadata_policy の変更・authority_hints の変更・鍵ローテーションを行い、発行・提示・ログインが拒否されることを確認します (プリセットあり)。「すべて初期状態に戻す」で復旧します。',
+      b: [btn('/federation', 'フェデレーション設定')],
+    },
   ]
   return steps
     .map(
@@ -181,7 +187,7 @@ ol.sc{list-style:none;margin:0;padding:0}ol.sc li{display:flex;gap:12px;padding:
 .ev-d{color:var(--mut);font-size:12px;word-break:break-all;margin-left:2px}
 .empty{color:var(--mut);font-size:13px}
 </style></head><body>
-<header><h1>学認 IHV プロトタイプ デモコンソール</h1><span class="mut">OpenID Federation × vcknots (OID4VCI / OID4VP) × ETSI TS 119 602 × Token Status List</span><a href="/trust-map" target="_blank" style="color:#fff;margin-left:auto;font-size:14px">🧭 信頼検証マップ</a><a href="/trust-chain" target="_blank" style="color:#fff;font-size:14px">🔗 Trust Chain Visualizer</a></header>
+<header><h1>学認 IHV プロトタイプ デモコンソール</h1><span class="mut">OpenID Federation × vcknots (OID4VCI / OID4VP) × ETSI TS 119 602 × Token Status List</span><a href="/federation" target="_blank" style="color:#fff;margin-left:auto;font-size:14px">⚙ フェデレーション設定</a><a href="/trust-map" target="_blank" style="color:#fff;font-size:14px">🧭 信頼検証マップ</a><a href="/trust-chain" target="_blank" style="color:#fff;font-size:14px">🔗 Trust Chain Visualizer</a></header>
 <div class="wrap">
  <div>
   <div class="panel"><h2>構成 (クリックで各エンティティの画面を開きます / ●は稼働状態)</h2>${diagramSvg()}</div>
@@ -195,7 +201,7 @@ ol.sc{list-style:none;margin:0;padding:0}ol.sc li{display:flex;gap:12px;padding:
  </div>
 </div>
 <script>
-const colors = {'学認SP':'#116329','InCommon SP':'#953800','Wallet Instance':'#8250df','学認Issuer':'#155e86','Verifier':'#bf3989','機関IdP':'#1a7f37','属性Provider':'#2da44e','Wallet Provider':'#9a6700','Trust List':'#cf222e','Status List':'#0969da'}
+const colors = {'学認SP':'#116329','InCommon SP':'#953800','Wallet Instance':'#8250df','学認Issuer':'#155e86','Verifier':'#bf3989','機関IdP':'#1a7f37','属性Provider':'#2da44e','Wallet Provider':'#9a6700','Trust List':'#cf222e','Status List':'#0969da','Federation 設定':'#6e7781'}
 let last = 0; const seen = new Set()
 const list = document.getElementById('events'), filter = document.getElementById('filter')
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))
@@ -223,8 +229,12 @@ poll(); health()
 </script></body></html>`
 
 /** Demo console: architecture diagram with live status, guided scenario and event timeline. */
-export const createDemoConsole = (opts: { anchors: TrustAnchorConfig[] }) => {
+export const createDemoConsole = (opts: {
+  anchors: TrustAnchorConfig[]
+  federationSettings: ReturnType<typeof createFederationSettings>
+}) => {
   const app = new Hono()
+  opts.federationSettings.mount(app, (c, body) => c.html(page('フェデレーション設定', body)))
   app.use('/api/*', cors({ origin: '*' }))
   app.get('/', (c) => c.html(pageHtml()))
   /** Trust map: who verifies whom, and how. */

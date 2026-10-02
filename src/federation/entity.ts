@@ -1,5 +1,5 @@
 import type { Hono } from 'hono'
-import type * as jose from 'jose'
+import * as jose from 'jose'
 import { type SigningKey, jwksOf, signJwt } from '../common/keys.js'
 
 export const ENTITY_STATEMENT_TYP = 'entity-statement+jwt'
@@ -24,7 +24,41 @@ export type SubordinateRegistration = {
   metadata?: FederationMetadata
   /** Entity types the subordinate is expected to have (used by the list endpoint filter). */
   entityTypes?: string[]
+  /** Fault injection for testing broken trust chains (demo settings). */
+  disabled?: boolean
+  /** Subordinate Statement carries a key that is not the subordinate's. */
+  wrongJwks?: boolean
+  /** Subordinate Statement is issued already expired. */
+  expired?: boolean
 }
+
+/** Fault injection on an entity's own Entity Configuration (demo settings). */
+export type EntityFaults = {
+  /** Entity Configuration is not published (404). */
+  ecDisabled?: boolean
+  /**
+   * Key rotation not propagated: the entity signs (and advertises) a new key, but its superiors'
+   * Subordinate Statements / the configured Trust Anchor key still hold the old one.
+   */
+  rotatedKey?: SigningKey
+}
+
+/** A key that belongs to nobody (for wrongJwks). */
+let strayKey: Promise<SigningKey> | undefined
+export const ephemeralKey = async (): Promise<SigningKey> => {
+  const { privateKey } = await jose.generateKeyPair('ES256', { extractable: true })
+  const privateJwk = await jose.exportJWK(privateKey)
+  const { d: _d, ...pub } = privateJwk
+  const kid = await jose.calculateJwkThumbprint(pub)
+  return {
+    kid,
+    alg: 'ES256',
+    privateKey: privateKey as CryptoKey,
+    publicJwk: { ...pub, kid, alg: 'ES256', use: 'sig' },
+    privateJwk: { ...privateJwk, kid },
+  }
+}
+const strayJwks = async () => jwksOf(await (strayKey ??= ephemeralKey()))
 
 export type FederationEntityOptions = {
   entityId: string
@@ -40,7 +74,9 @@ export type FederationEntityOptions = {
 
 export type FederationEntity = FederationEntityOptions & {
   isAuthority: boolean
-  entityConfiguration(): Promise<string>
+  faults: EntityFaults
+  /** Returns null when the Entity Configuration is not published (fault injection). */
+  entityConfiguration(): Promise<string | null>
   subordinateStatement(sub: string): Promise<string | null>
   register(reg: SubordinateRegistration): void
 }
@@ -63,23 +99,26 @@ export const createFederationEntity = (options: FederationEntityOptions): Federa
 
   const now = () => Math.floor(Date.now() / 1000)
 
-  return {
+  const self: FederationEntity = {
     ...options,
     metadata,
     isAuthority,
+    faults: {},
     async entityConfiguration() {
+      if (self.faults.ecDisabled) return null
+      const key = self.faults.rotatedKey ?? options.federationKey
       const iat = now()
       return signJwt(
-        options.federationKey,
+        key,
         {
           iss: options.entityId,
           sub: options.entityId,
           iat,
           exp: iat + lifetime,
-          jwks: jwksOf(options.federationKey),
+          jwks: jwksOf(key),
           metadata,
-          ...(options.authorityHints && options.authorityHints.length > 0
-            ? { authority_hints: options.authorityHints }
+          ...(self.authorityHints && self.authorityHints.length > 0
+            ? { authority_hints: self.authorityHints }
             : {}),
         },
         ENTITY_STATEMENT_TYP
@@ -87,16 +126,16 @@ export const createFederationEntity = (options: FederationEntityOptions): Federa
     },
     async subordinateStatement(sub: string) {
       const reg = options.subordinates?.get(sub)
-      if (!reg) return null
-      const iat = now()
+      if (!reg || reg.disabled) return null
+      const iat = reg.expired ? now() - 2 * 3600 : now()
       return signJwt(
-        options.federationKey,
+        self.faults.rotatedKey ?? options.federationKey,
         {
           iss: options.entityId,
           sub: reg.entityId,
           iat,
-          exp: iat + lifetime,
-          jwks: reg.jwks,
+          exp: reg.expired ? iat + 3600 : iat + lifetime,
+          jwks: reg.wrongJwks ? await strayJwks() : reg.jwks,
           ...(reg.metadataPolicy ? { metadata_policy: reg.metadataPolicy } : {}),
           ...(reg.metadata ? { metadata: reg.metadata } : {}),
         },
@@ -108,15 +147,16 @@ export const createFederationEntity = (options: FederationEntityOptions): Federa
       options.subordinates.set(reg.entityId, reg)
     },
   }
+  return self
 }
 
 /** Mounts the Federation API endpoints (Entity Configuration, fetch, list) on a Hono app. */
 export const mountFederationEndpoints = (app: Hono, entity: FederationEntity) => {
-  app.get(WELL_KNOWN_FEDERATION, async (c) =>
-    c.body(await entity.entityConfiguration(), 200, {
-      'Content-Type': 'application/entity-statement+jwt',
-    })
-  )
+  app.get(WELL_KNOWN_FEDERATION, async (c) => {
+    const ec = await entity.entityConfiguration()
+    if (!ec) return c.json({ error: 'not_found', error_description: 'entity configuration is not published' }, 404)
+    return c.body(ec, 200, { 'Content-Type': 'application/entity-statement+jwt' })
+  })
   if (!entity.isAuthority) return
 
   app.get('/fetch', async (c) => {
@@ -132,6 +172,7 @@ export const mountFederationEndpoints = (app: Hono, entity: FederationEntity) =>
   app.get('/list', (c) => {
     const entityType = c.req.query('entity_type')
     const subs = [...(entity.subordinates?.values() ?? [])]
+      .filter((s) => !s.disabled)
       .filter((s) => !entityType || (s.entityTypes ?? []).includes(entityType))
       .map((s) => s.entityId)
     return c.json(subs)

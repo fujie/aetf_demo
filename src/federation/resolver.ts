@@ -265,8 +265,15 @@ export const resolveTrustChain = async (
     .filter((s) => !!s.payload.metadata_policy)
     .map((s) => ({ issuer: s.payload.iss, policy: s.payload.metadata_policy as MetadataPolicy }))
     .reverse() // Trust Anchor first
-  const merged = mergePolicies(policies.map((p) => p.policy))
-  metadata = applyPolicy(metadata, merged)
+  let merged: MetadataPolicy
+  try {
+    merged = mergePolicies(policies.map((p) => p.policy))
+    metadata = applyPolicy(metadata, merged)
+  } catch (e) {
+    const message = `metadata_policy: ${(e as Error).message}`
+    trace?.push({ type: 'error', message })
+    throw new Error(`no valid trust chain for ${entityId}: ${message}`)
+  }
   trace?.push({
     type: 'metadata',
     leaf: structuredClone(leaf.payload.metadata ?? {}),

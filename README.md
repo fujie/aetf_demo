@@ -25,6 +25,7 @@ npm run demo        # 全エンティティ + Web Wallet (Go) を起動。Go 1.2
 | 画面 | URL | 内容 |
 | --- | --- | --- |
 | デモコンソール | <http://localhost:8790> | 図と同じ構成図 (クリックで各画面へ・稼働状態表示)、手順ガイド、全エンティティの処理がリアルタイムに流れるタイムライン |
+| フェデレーション設定 | <http://localhost:8790/federation> | 信頼関係を実行中に編集して Trust Chain が壊れたときの挙動を試す ([下記](#フェデレーション設定-trust-chain-を壊すテスト)) |
 | 信頼検証マップ | <http://localhost:8790/trust-map> | どのエンティティがどのエンティティを、どの方法で検証しているかの図と一覧 ([下記](#信頼検証マップ-誰が誰をどう検証しているか)) |
 | Trust Chain Visualizer | <http://localhost:8790/trust-chain> | 任意のエンティティの Trust Chain 解決を図で表示 ([下記](#trust-chain-の可視化)) |
 | Web Wallet | <http://localhost:8760> | スマートフォン風のウォレット。登録、受け取り (Issuer の信頼チェーン確認)、提示 (Verifier 認証と開示する属性の選択)、カードごとの状態 (VALID / SUSPENDED / INVALID) |
@@ -48,6 +49,7 @@ Issuer の Offer 画面と Verifier のリクエスト画面にある **「Web W
 6. Wallet Provider で Wallet Instance を一時停止 / 失効 → 約 10 秒後から Issuer・Verifier が Wallet Attestation を拒否 (発行・提示ができなくなる)。「再有効化」で復帰
 7. 学認SP と InCommon SP に機関IdPでログイン (InCommon SP には eduGAIN 経由で最小限の属性のみ送信)
 8. Trust Chain Visualizer (または InCommon SP の Trust Chain Explorer) で信頼チェーンの解決過程を図で確認
+9. フェデレーション設定で信頼関係を壊し、発行・提示・ログインが拒否されることを確認 (「すべて初期状態に戻す」で復旧)
 
 補足:
 
@@ -115,6 +117,29 @@ OpenID Federation 部分は `src/federation/` (TypeScript) と `wallet-instance/
   (機関IdP は `RS256` も宣言しているが、解決後メタデータからは除去される。Trust Chain Visualizer の「metadata_policy の適用」で確認可能)
 - NII → 各リーフ: `federation_entity.contacts` に `add`、Issuer には `credential_configurations_supported` を `essential`、
   Wallet Provider には `attestation_signing_alg_values_supported` を `subset_of [ES256]`
+
+## フェデレーション設定 (Trust Chain を壊すテスト)
+
+デモコンソールの **フェデレーション設定** (<http://localhost:8790/federation>) で、信頼関係を実行中に編集できます
+(`src/services/federation-settings.ts`)。変更は即時に反映され (Trust Chain のキャッシュも破棄)、ページ上部に全エンティティの Trust Chain の有効 / 無効が表示されます。
+変更はメモリ上のみで、「すべて初期状態に戻す」かサーバー再起動で元に戻ります。
+
+| 対象 | 操作 | 壊れ方 |
+| --- | --- | --- |
+| 上位が発行する Subordinate Statement | 登録の停止 / 再開、下位の追加・削除 | `fetch?sub=` が 404 になり上位へたどれない |
+| | jwks を不正な鍵に | 下位の Entity Configuration の署名鍵が SS の jwks に含まれず検証失敗 |
+| | 期限切れにする | SS の `exp` 検証で失敗 |
+| | metadata_policy を編集 (JSON) | 署名は正しくても policy の適用で失敗 (essential 欠落、one_of 違反、上位との矛盾など) |
+| 各エンティティの Entity Configuration | authority_hints の変更 | 登録されていない上位を指すと 404。上位に登録すれば別経路で解決 |
+| | 非公開にする | `/.well-known/openid-federation` が 404 |
+| | 鍵ローテーション | 新しい鍵で署名・公開するが上位の SS (TA の場合は各エンティティの事前設定) は旧鍵のまま → 検証失敗 |
+
+プリセット: NII が学認Issuer の登録を停止 / Wallet Provider の鍵ローテーション / NII → Status List の SS に誤った鍵 /
+eduGAIN → NII の SS が期限切れ / 機関IdP に満たせない metadata_policy / 学認Issuer の authority_hints を I2 に変更 / Trust Anchor の鍵ローテーション。
+各プリセットに想定される影響 (例: Wallet が Credential Offer を拒否、Verifier が Issuer を信頼できず拒否、機関IdP がログインを拒否) が書かれています。
+壊れた Trust Chain は Trust Chain Visualizer で、どのステップで失敗したかを確認できます。
+
+![federation settings](docs/images/federation-settings.png)
 
 ## 信頼検証マップ (誰が誰をどう検証しているか)
 
