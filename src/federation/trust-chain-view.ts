@@ -158,8 +158,14 @@ const diagramSvg = (model: Model, leafId: string, path: Set<string>, label: (id:
   const width = Math.max(...[...byLevel.values()].map((ids) => ids.length)) * groupW
   const height = (maxLevel + 1) * ROW_H + 20
 
-  const badge = (x: number, y: number, text: string, st: 'ok' | 'ng' | 'na') =>
-    `<g><rect x="${x}" y="${y}" width="${text.length * 11 + 20}" height="20" rx="10" fill="${COLORS[st]}"/><text x="${x + 10}" y="${y + 14}" class="bd">${esc(text)}</text></g>`
+  /** Status pill; with `ev` it is prefixed by the step number of that trace event. */
+  const badge = (x: number, y: number, text: string, st: 'ok' | 'ng' | 'na', ev?: TraceEvent) => {
+    const n = ev && steps.get(ev)
+    const pad = n ? 22 : 10
+    return `<g><rect x="${x}" y="${y}" width="${text.length * 11 + 10 + pad}" height="20" rx="10" fill="${COLORS[st]}"/>${
+      n ? `<circle cx="${x + 10}" cy="${y + 10}" r="9" fill="#fff"/><text x="${x + 10}" y="${y + 14}" class="snb" fill="${COLORS[st]}">${n}</text>` : ''
+    }<text x="${x + pad}" y="${y + 14}" class="bd">${esc(text)}</text></g>`
+  }
   const lines = (x: number, y: number, rows: [string, string?][]) =>
     rows
       .map(
@@ -215,9 +221,9 @@ const diagramSvg = (model: Model, leafId: string, path: Set<string>, label: (id:
       <path d="M${p.x} ${p.y + 8}a8 8 0 0 1 8 -8h${EC_W - 16}a8 8 0 0 1 8 8v20h-${EC_W}z" class="ech"/>
       <text x="${p.x + 10}" y="${p.y + 19}" class="ht">Entity Configuration</text>
       ${lines(p.x + 10, p.y + 46, rows)}
-      ${node.selfVerify ? badge(p.x + 10, p.y + EC_H - 28, `自己署名 ${node.selfVerify.ok ? '✓' : '✗'}`, status(node.selfVerify)) : ''}
-      ${node.ssVerify ? badge(p.x + 120, p.y + EC_H - 28, `上位SSの鍵 ${node.ssVerify.ok ? '✓' : '✗'}`, status(node.ssVerify)) : ''}
-      ${node.taVerify ? badge(p.x + 120, p.y + EC_H - 28, `TA鍵 ${node.taVerify.ok ? '✓' : '✗'}`, status(node.taVerify)) : ''}
+      ${node.selfVerify ? badge(p.x + 10, p.y + EC_H - 28, `自己署名 ${node.selfVerify.ok ? '✓' : '✗'}`, status(node.selfVerify), node.selfVerify) : ''}
+      ${node.ssVerify ? badge(p.x + 135, p.y + EC_H - 28, `上位SSの鍵 ${node.ssVerify.ok ? '✓' : '✗'}`, status(node.ssVerify)) : ''}
+      ${node.taVerify ? badge(p.x + 135, p.y + EC_H - 28, `TA鍵 ${node.taVerify.ok ? '✓' : '✗'}`, status(node.taVerify)) : ''}
       ${stepNo(node.fetch, p.x + EC_W - 4, p.y + 4)}</g>`)
     if (isTa) {
       const ky = p.y + 134
@@ -265,6 +271,26 @@ const diagramSvg = (model: Model, leafId: string, path: Set<string>, label: (id:
       const ev = ecs.get(s.entity)?.ssVerify
       parts.push(arrow(p.x + 60, p.y + EC_H + 2, sub.x + EC_W - 40, sub.y - 2, status(ev), 'jwks で EC を検証', ev))
     }
+  }
+
+  // final step (metadata policy application, or the resolution error): drawn in the leaf's row
+  const final = [...steps.keys()].find((e) => e.type === 'metadata' || e.type === 'error')
+  const leafPos = pos.get(leafId)
+  if (final && leafPos) {
+    const x = leafPos.x + EC_W + 80
+    const y = leafPos.y + 20
+    const ok = final.type === 'metadata'
+    const rows: [string, string?][] = ok
+      ? [
+          [`metadata_policy: ${trunc(final.policies.map((p) => label(p.issuer)).join(' → ') || 'なし', 26)}`],
+          ['(TA から順にマージして Leaf に適用)'],
+          [`entity types: ${trunc(Object.keys(final.resolved).join(', '), 28)}`],
+        ]
+      : [[trunc(final.message, 44), 'tng'], [trunc(final.message.slice(43), 44), 'tng']]
+    parts.push(`<g><rect x="${x}" y="${y}" width="${SS_W}" height="${EC_H - 40}" rx="8" class="card" style="stroke:${ok ? COLORS.ok : COLORS.ng};stroke-width:2;stroke-dasharray:6 4"/>
+      <text x="${x + 10}" y="${y + 24}" class="ft" fill="${ok ? COLORS.ok : COLORS.ng}">${ok ? 'Resolved Metadata' : 'Trust Chain 構築失敗'}</text>
+      ${lines(x + 10, y + 50, rows)}${stepNo(final, x + SS_W - 4, y + 4)}</g>`)
+    parts.push(arrow(leafPos.x + EC_W + 2, y + 64, x - 2, y + 64, ok ? 'ok' : 'ng', ok ? '適用' : '失敗', undefined))
   }
 
   return `<svg class="tcv-svg" viewBox="0 0 ${width} ${height}" style="max-width:${width}px" xmlns="http://www.w3.org/2000/svg">
@@ -381,7 +407,7 @@ export const TRUST_CHAIN_VIEW_CSS = `
 .tcv-svg .ech{fill:#155e86}.tcv-svg .ssh{fill:#8250df}.tcv-svg .ht{fill:#fff;font-size:13px;font-weight:700}.tcv-svg .hs{fill:#dbe9f2;font-size:10px;text-anchor:end}
 .tcv-svg .tx{font-size:12.5px;fill:#1f2328}.tcv-svg .tng{font-size:12px;fill:#cf222e}.tcv-svg .tmut{font-size:12px;fill:#8c959f}
 .tcv-svg .bd{font-size:11.5px;fill:#fff;font-weight:700}.tcv-svg .al{font-size:11.5px;text-anchor:middle;font-weight:700}
-.tcv-svg .sn{fill:#1f2328}.tcv-svg .snt{fill:#fff;font-size:11px;text-anchor:middle;font-weight:700}
+.tcv-svg .sn{fill:#1f2328}.tcv-svg .snb{font-size:11px;text-anchor:middle;font-weight:700}.tcv-svg .ft{font-size:15px;font-weight:700}.tcv-svg .snt{fill:#fff;font-size:11px;text-anchor:middle;font-weight:700}
 .tcv-svg .key{fill:#fff4d6;stroke:#bf8700}.tcv-svg .kt{font-size:12px;text-anchor:middle;fill:#7d4e00}
 .tcv-legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:#57606a;margin:6px 0 0}
 .tcv-legend i{display:inline-block;width:14px;height:10px;border-radius:2px;margin-right:4px;vertical-align:middle}
