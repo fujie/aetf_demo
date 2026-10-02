@@ -53,14 +53,46 @@ func (i *Instance) walletProviderMetadata() (*ResolvedChain, map[string]any, err
 	return ResolveEntityType(i.state.WalletProvider, "wallet_provider", i.trustAnchor)
 }
 
+// walletProviderAPI is the Wallet Provider's public API metadata (/.well-known/wallet-provider).
+// The endpoints are not part of the federation metadata; the federation only vouches for the
+// Wallet Provider and its attestation signing key.
+type walletProviderAPI struct {
+	WalletProvider               string `json:"wallet_provider"`
+	InstanceRegistrationEndpoint string `json:"wallet_instance_registration_endpoint"`
+	AttestationEndpoint          string `json:"wallet_attestation_endpoint"`
+}
+
+func (i *Instance) walletProviderEndpoints() (*walletProviderAPI, error) {
+	raw, err := fetchText(strings.TrimSuffix(i.state.WalletProvider, "/") + "/.well-known/wallet-provider")
+	if err != nil {
+		return nil, fmt.Errorf("wallet provider metadata: %w", err)
+	}
+	var api walletProviderAPI
+	if err := json.Unmarshal([]byte(raw), &api); err != nil {
+		return nil, fmt.Errorf("wallet provider metadata: %w", err)
+	}
+	// the metadata must describe the entity whose Trust Chain was validated
+	if api.WalletProvider != i.state.WalletProvider {
+		return nil, fmt.Errorf("wallet provider metadata is for %q, not %q", api.WalletProvider, i.state.WalletProvider)
+	}
+	if api.InstanceRegistrationEndpoint == "" || api.AttestationEndpoint == "" {
+		return nil, fmt.Errorf("wallet provider metadata lacks endpoints")
+	}
+	return &api, nil
+}
+
 // Register registers this Wallet Instance with the Wallet Provider (red "Registration" arrow).
 func (i *Instance) Register() error {
-	chain, md, err := i.walletProviderMetadata()
+	chain, _, err := i.walletProviderMetadata()
 	if err != nil {
 		return i.fail(M("Wallet Provider を信頼できません", "Cannot trust the Wallet Provider"), fmt.Errorf("wallet provider is not trusted: %w", err))
 	}
 	i.ok(M("Wallet Provider を OpenID Federation で確認", "Wallet Provider verified through OpenID Federation"), S("%s", strings.Join(chain.Path, " → ")))
-	endpoint, _ := md["wallet_instance_registration_endpoint"].(string)
+	api, err := i.walletProviderEndpoints()
+	if err != nil {
+		return i.fail(M("Wallet Provider のメタデータを取得できません", "Cannot fetch the Wallet Provider metadata"), err)
+	}
+	endpoint := api.InstanceRegistrationEndpoint
 	pub := i.instanceKey.PublicKey()
 	var res struct {
 		WalletInstanceID string `json:"wallet_instance_id"`
@@ -104,7 +136,11 @@ func (i *Instance) RefreshAttestation() error {
 	if err != nil {
 		return err
 	}
-	endpoint, _ := md["wallet_attestation_endpoint"].(string)
+	api, err := i.walletProviderEndpoints()
+	if err != nil {
+		return i.fail(M("Wallet Provider のメタデータを取得できません", "Cannot fetch the Wallet Provider metadata"), err)
+	}
+	endpoint := api.AttestationEndpoint
 	now := time.Now()
 	req, err := signJWT(i.instanceKey, attestationRequestTyp, map[string]any{
 		"iss": i.state.WalletInstanceID,

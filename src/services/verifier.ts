@@ -110,7 +110,7 @@ export const createVerifier = async (opts: {
   const registerToTrustList = async () => {
     const { metadata } = await resolveEntityMetadata<{ registration_endpoint: string }>(
       opts.trustListEntityId,
-      'trust_list_provider',
+      'rp_registrar',
       opts.anchors
     )
     const request = await new jose.SignJWT({

@@ -73,15 +73,22 @@ export const createWalletProvider = (opts: {
     authorityHints: opts.authorityHints,
     metadata: {
       federation_entity: { organization_name: 'Prototype Wallet Provider' },
+      // Trust-relevant metadata only (the key signing Wallet Attestations). The Wallet Provider's own
+      // API endpoints are not federation metadata: they are published at /.well-known/wallet-provider.
       wallet_provider: {
         wallet_name: walletName,
-        wallet_instance_registration_endpoint: `${entityId}/wallet-instances`,
-        wallet_attestation_endpoint: `${entityId}/wallet-attestations`,
         attestation_signing_alg_values_supported: ['ES256'],
         jwks: jwksOf(opts.signingKey),
       },
     },
   })
+  /** Public metadata of the Wallet Provider's API (outside the federation; prototype-specific). */
+  const apiMetadata = {
+    wallet_provider: entityId,
+    wallet_name: walletName,
+    wallet_instance_registration_endpoint: `${entityId}/wallet-instances`,
+    wallet_attestation_endpoint: `${entityId}/wallet-attestations`,
+  }
   // persisted under .data so that registered Wallet Instances survive restarts
   // (the Web Wallet keeps its registration, and the Status List entries are persisted too)
   const STORE = 'wallet-provider/instances.json'
@@ -94,6 +101,7 @@ export const createWalletProvider = (opts: {
 
   const app = new Hono()
   mountFederationEndpoints(app, entity)
+  app.get('/.well-known/wallet-provider', (c) => c.json(apiMetadata))
 
   app.get('/', (c) => {
     const btn = (i: WalletInstance, action: string, label: string) =>

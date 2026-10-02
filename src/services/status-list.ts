@@ -77,10 +77,10 @@ export const createStatusList = (opts: {
     authorityHints: opts.authorityHints,
     metadata: {
       federation_entity: { organization_name: 'Prototype Status List Provider' },
+      // Only parameters defined elsewhere: `status_list_aggregation_endpoint` (draft-ietf-oauth-status-list)
+      // and `jwks` (OpenID Federation common metadata parameter: keys signing Status List Tokens).
       status_list_provider: {
         status_list_aggregation_endpoint: aggregationUri,
-        status_list_token_media_types_supported: [STATUS_LIST_MEDIA_TYPE],
-        status_list_token_signing_alg_values_supported: ['ES256'],
         jwks: jwksOf(opts.signingKey),
       },
     },

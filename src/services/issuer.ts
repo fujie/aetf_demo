@@ -201,6 +201,16 @@ export const createIssuer = async (opts: {
 
   const statusListAggregationEndpoint = `${opts.statusListEntityId}/aggregation?issuer=${encodeURIComponent(baseUrl)}`
 
+  // Protocol metadata, built once and published unchanged both at the OID4VCI / RFC 8414 well-known
+  // locations and in the Entity Configuration (OpenID Federation Wallet Architectures: the
+  // OID4VCI / OAuth parameters are carried unchanged in the federation metadata).
+  const credentialIssuerMetadata = (await issuerFlow.findIssuerMetadata(issuerId)) as unknown as Record<string, unknown>
+  const authorizationServerMetadata: Record<string, unknown> = {
+    ...((await authzFlow.findAuthzServerMetadata(authzId)) as unknown as Record<string, unknown>),
+    // draft-ietf-oauth-status-list: registered in the OAuth Authorization Server Metadata registry
+    status_list_aggregation_endpoint: statusListAggregationEndpoint,
+  }
+
   // ---- OpenID Federation ------------------------------------------------------------------
   const entity = createFederationEntity({
     entityId: baseUrl,
@@ -208,17 +218,9 @@ export const createIssuer = async (opts: {
     authorityHints: opts.authorityHints,
     metadata: {
       federation_entity: { organization_name: 'GakuNin Issuer (Example University)' },
-      openid_credential_issuer: {
-        ...(issuerMetadata as unknown as Record<string, unknown>),
-        ...(credentialJwks ? { jwks: credentialJwks } : {}),
-      },
-      oauth_authorization_server: {
-        issuer: baseUrl,
-        token_endpoint: `${baseUrl}/token`,
-        token_endpoint_auth_methods_supported: ['attest_jwt_client_auth'],
-        // draft-ietf-oauth-status-list section 9.1
-        status_list_aggregation_endpoint: statusListAggregationEndpoint,
-      },
+      // `jwks` (OpenID Federation common metadata parameter): keys signing the issued credentials
+      openid_credential_issuer: { ...credentialIssuerMetadata, ...(credentialJwks ? { jwks: credentialJwks } : {}) },
+      oauth_authorization_server: authorizationServerMetadata,
       openid_relying_party: {
         client_name: 'GakuNin Issuer',
         client_registration_types: ['automatic'],
@@ -467,15 +469,8 @@ export const createIssuer = async (opts: {
   })
 
   // ---- OID4VCI / OAuth endpoints ----------------------------------------------------------
-  app.get('/.well-known/openid-credential-issuer', async (c) =>
-    c.json(await issuerFlow.findIssuerMetadata(issuerId))
-  )
-  app.get('/.well-known/oauth-authorization-server', async (c) =>
-    c.json({
-      ...(await authzFlow.findAuthzServerMetadata(authzId)),
-      status_list_aggregation_endpoint: statusListAggregationEndpoint,
-    })
-  )
+  app.get('/.well-known/openid-credential-issuer', (c) => c.json(credentialIssuerMetadata))
+  app.get('/.well-known/oauth-authorization-server', (c) => c.json(authorizationServerMetadata))
   app.get('/.well-known/jwt-vc-issuer', async (c) =>
     c.json(await issuerFlow.findJwtVcIssuerMetadata(issuerId))
   )

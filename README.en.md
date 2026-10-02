@@ -101,7 +101,7 @@ Notes:
 | Institution IdP | `http://localhost:8710` | `src/services/idp.ts` | OpenID Provider. Accepts RPs with **federation automatic registration** (redirect_uris / jwks come from the metadata resolved through the Trust Chain) |
 | Attribute Provider | `http://localhost:8711` | `src/services/attribute-provider.ts` | Returns additional attributes such as student number and department. Verifies the requester through its Trust Chain and signs the response |
 | GakuNin Issuer (configured as a GakuNin SP) | `http://localhost:8720` | `src/services/issuer.ts` | vcknots IssuerFlow / AuthzFlow. Login at the Institution IdP → Attribute Provider → issues an SD-JWT VC |
-| Wallet Provider | `http://localhost:8730` | `src/services/wallet-provider.ts` | Wallet Instance registration and Wallet Attestation (`oauth-client-attestation+jwt`) issuance |
+| Wallet Provider | `http://localhost:8730` | `src/services/wallet-provider.ts` | Wallet Instance registration and Wallet Attestation (`oauth-client-attestation+jwt`) issuance (endpoints at `/.well-known/wallet-provider`) |
 | Trust List | `http://localhost:8731` | `src/services/trust-list.ts`, `src/trust-list/` | Registrar + Access CA (WRPAC Provider) + LoTE Provider of the EUDI model. Publishes the WRPAC Providers [ETSI TS 119 602 LoTE](#trust-list-etsi-ts-119-602--ts-119-411-8) |
 | Status List | `http://localhost:8732` | `src/services/status-list.ts` | Status Issuer / Status Provider of the [Token Status List (draft-ietf-oauth-status-list)](https://datatracker.ietf.org/doc/draft-ietf-oauth-status-list/) |
 | Verifiers | `http://localhost:8740` | `src/services/verifier.ts` | vcknots VerifierFlow (OID4VP, x509_san_dns + JAR). Registers at the Registrar on startup and uses its access certificate (WRPAC) in the Request Object `x5c` |
@@ -382,10 +382,30 @@ The Trust Chain Visualizer (<http://localhost:8790/trust-chain>) and the InCommo
   The Web Wallet checks its registration with the Wallet Provider on startup and re-registers if it is not found.
   To reset everything, press "⟲ Reset all" on the demo console, or stop the servers and delete `.data/` (the Verifier re-registers at the Registrar on startup)
 - Federation: Trust Marks, `constraints`, the Resolve endpoint and historical keys are not implemented. metadata_policy supports the main operators only (value / add / default / one_of / subset_of / superset_of / essential)
-- The entity types `wallet_provider` / `trust_list_provider` / `status_list_provider` / `attribute_provider` are specific to this prototype (trusting the LoTE signer via OpenID Federation is also a combination specific to it; in EUDI the wallet is configured with the LoTE signer's trust anchor out of band)
+- The entity types `wallet_provider` / `attribute_provider` / `trust_list_provider` / `rp_registrar` / `status_list_provider` are specific to this prototype (table below). Trusting the LoTE signer via OpenID Federation is also a combination specific to it; in EUDI the wallet is configured with the LoTE signer's trust anchor out of band
+
 - The LoTE type and service type URIs are the ETSI ones for EU WRPAC Providers (`SchemeTerritory` is `JP`). The Registrar, Access CA and LoTE Provider would normally be separate parties but are combined in one entity
 - The Registrar does not verify RP identities and approves automatically. Registration certificates (WRPRC), the wallet-side check that requested attributes are within the registration, OCSP and ETSI TS 119 612 (XML Trusted List / LOTL) are not implemented
 - The Wallet Provider does not verify key attestation / app integrity. The Status List management API (Issuer → Status Issuer) is protected with a shared secret. Status List Tokens are JWT only (no CWT)
 - Adding a Wallet Attestation to the Verifier response is outside the OID4VP standard (an extension for this scenario)
 - The Verifier is trusted through the Trust List (access certificate) and does not join the federation. client_id is `x509_san_dns:localhost` (a single Verifier)
 - Demo user data (names, departments) and the Japanese entries of the protocol metadata (`display` with `locale: ja-JP`) stay in Japanese in the English UI
+
+### Entity types in the federation metadata (standard / custom)
+
+The entity types in the `metadata` of the Entity Configurations and where their contents come from. `jwks` is an OpenID Federation 1.0 common metadata parameter (5.2.1); in every type it holds the protocol keys of that role (separate from the federation keys).
+Only trust-relevant metadata is put in the federation; service-specific API endpoints are published outside it (`.well-known`).
+
+| Entity | Entity type | Kind | Source / contents |
+| --- | --- | --- | --- |
+| All entities | `federation_entity` | standard | OpenID Federation 1.0. `organization_name`; Trust Anchor / Intermediates also `federation_fetch_endpoint` / `federation_list_endpoint` |
+| Institution IdP | `openid_provider` | standard | OpenID Federation 1.0 / OpenID Connect Discovery. `client_registration_types_supported: ["automatic"]` |
+| GakuNin Issuer | `openid_credential_issuer` | standard | OpenID4VCI 1.0 / OpenID Federation Wallet Architectures. The same object as `/.well-known/openid-credential-issuer` plus `jwks` with the credential signing keys |
+| GakuNin Issuer | `oauth_authorization_server` | standard | RFC 8414 / OpenID Federation. The same object as `/.well-known/oauth-authorization-server`. `status_list_aggregation_endpoint` is registered as AS metadata by draft-ietf-oauth-status-list, `attest_jwt_client_auth` comes from draft-ietf-oauth-attestation-based-client-auth |
+| GakuNin Issuer / GakuNin SP / InCommon SP | `openid_relying_party` | standard | OpenID Federation 1.0 (automatic registration) |
+| Wallet Provider | `wallet_provider` | custom | `wallet_name`, `attestation_signing_alg_values_supported` (custom), `jwks` (Wallet Attestation signing keys). The registration / attestation endpoints are published outside the federation at `/.well-known/wallet-provider` (custom). The standard would be `openid_wallet_provider` of OpenID Federation Wallet Architectures (containing OpenID4VP Wallet Metadata), not supported yet |
+| Attribute Provider | `attribute_provider` | custom | `attribute_endpoint`, `attributes_supported` (custom), `jwks` (attribute response signing keys) |
+| Trust List | `trust_list_provider` | custom | LoTE Provider role. `scheme_operator_name`, `lote_locations`, `lote_signing_alg_values_supported` (custom; they point to the ETSI TS 119 602 LoTE), `jwks` (LoTE signing keys) |
+| Trust List | `rp_registrar` | custom | Registrar role (EUDI ARF 6.4). `registration_endpoint` (custom) |
+| Status List | `status_list_provider` | custom (type only) | Only parameters defined by other specifications: `status_list_aggregation_endpoint` (draft-ietf-oauth-status-list), `jwks` (Status List Token signing keys) |
+| Verifier | (not a member) | — | Trusted via the Trust List (access certificate) by design. To join the federation it would use `openid_credential_verifier` of OpenID Federation Wallet Architectures |

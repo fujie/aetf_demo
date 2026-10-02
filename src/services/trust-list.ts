@@ -43,7 +43,8 @@ type Registration = {
  *    Certificate (ETSI TS 119 411-8) to each registered RP and publishes a CRL
  *  - LoTE Provider / Scheme Operator: publishes the WRPAC Providers List of Trusted Entities
  *    (ETSI TS 119 602, JAdES-signed JSON) carrying the Access CA certificate as trust anchor
- * Wallet Units validate the LoTE signer through OpenID Federation (`trust_list_provider` metadata).
+ * Wallet Units validate the LoTE signer through OpenID Federation (`trust_list_provider` metadata);
+ * Verifiers find the Registrar through the separate `rp_registrar` metadata.
  */
 export const createTrustList = async (opts: {
   entityId: string
@@ -84,12 +85,16 @@ export const createTrustList = async (opts: {
     authorityHints: opts.authorityHints,
     metadata: {
       federation_entity: { organization_name: schemeOperator },
+      // LoTE Provider role (distribution of the ETSI TS 119 602 List of Trusted Entities)
       trust_list_provider: {
         scheme_operator_name: schemeOperator,
         lote_locations: [{ lote_type: ETSI19602.WRPAC_PROVIDERS_LOTE_TYPE, location: loteUri, mime_type: LOTE_MEDIA_TYPE }],
-        registration_endpoint: `${entityId}/registrar/registrations`,
         lote_signing_alg_values_supported: ['ES256'],
         jwks: jwksOf(opts.signingKey),
+      },
+      // Registrar role (registration of wallet-relying parties, EUDI ARF 6.4) - a separate entity type
+      rp_registrar: {
+        registration_endpoint: `${entityId}/registrar/registrations`,
       },
     },
   })

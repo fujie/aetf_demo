@@ -99,7 +99,7 @@ Issuer の Offer 画面と Verifier のリクエスト画面にある **「Web W
 | 機関IdP | `http://localhost:8710` | `src/services/idp.ts` | OpenID Provider。RP を **Federation の automatic registration** で受け入れ (redirect_uris / jwks は Trust Chain 解決後のメタデータから取得) |
 | 属性Provider | `http://localhost:8711` | `src/services/attribute-provider.ts` | 学籍番号・学部などの追加属性を返す。要求者を Trust Chain で検証し、応答に署名 |
 | 学認Issuer (学認SPとして構成) | `http://localhost:8720` | `src/services/issuer.ts` | vcknots IssuerFlow / AuthzFlow。機関IdP でログイン → 属性Provider → SD-JWT VC を発行 |
-| Wallet Provider | `http://localhost:8730` | `src/services/wallet-provider.ts` | Wallet Instance 登録と Wallet Attestation (`oauth-client-attestation+jwt`) 発行 |
+| Wallet Provider | `http://localhost:8730` | `src/services/wallet-provider.ts` | Wallet Instance 登録と Wallet Attestation (`oauth-client-attestation+jwt`) 発行 (エンドポイントは `/.well-known/wallet-provider`) |
 | Trust List | `http://localhost:8731` | `src/services/trust-list.ts`, `src/trust-list/` | EUDI モデルの Registrar + Access CA (WRPAC Provider) + LoTE Provider。WRPAC Providers の [ETSI TS 119 602 LoTE](#trust-list-etsi-ts-119-602--ts-119-411-8) を配布 |
 | Status List | `http://localhost:8732` | `src/services/status-list.ts` | [Token Status List (draft-ietf-oauth-status-list)](https://datatracker.ietf.org/doc/draft-ietf-oauth-status-list/) の Status Issuer / Status Provider |
 | Verifiers | `http://localhost:8740` | `src/services/verifier.ts` | vcknots VerifierFlow (OID4VP, x509_san_dns + JAR)。起動時に Registrar へ登録し、アクセス証明書 (WRPAC) を Request Object の `x5c` に使用 |
@@ -379,9 +379,29 @@ Trust Chain Visualizer (<http://localhost:8790/trust-chain>) や InCommon SP の
   Web Wallet は起動時に Wallet Provider へ登録を確認し、登録が見つからなければ再登録します。
   全体を初期化するには、デモコンソールの「⟲ 全て初期化」を押すか、サーバーを止めて `.data/` を削除してください (Verifier は起動時に Registrar へ再登録します)
 - Federation: Trust Mark、`constraints`、Resolve endpoint、Historical keys は未実装。metadata_policy は主要オペレーター (value / add / default / one_of / subset_of / superset_of / essential) のみ
-- Entity Type `wallet_provider` / `trust_list_provider` / `status_list_provider` / `attribute_provider` は本プロトタイプ独自 (LoTE の署名者を OpenID Federation で信頼する点も独自の組合せ。EUDI では Wallet に LoTE 署名者のトラストアンカーを帯域外で設定)
+- Entity Type のうち `wallet_provider` / `attribute_provider` / `trust_list_provider` / `rp_registrar` / `status_list_provider` は本プロトタイプ独自です (下表)。LoTE の署名者を OpenID Federation で信頼する点も独自の組合せで、EUDI では Wallet に LoTE 署名者のトラストアンカーを帯域外で設定します
+
 - LoTE の型・サービス種別 URI は ETSI の EU WRPAC Providers 用のものを流用 (`SchemeTerritory` は `JP`)。Registrar・Access CA・LoTE Provider は本来別主体だが、1 エンティティにまとめています
 - Registrar は RP の本人確認を行わず自動承認。登録証明書 (WRPRC) と「要求属性が登録範囲内か」の Wallet 側検査、OCSP、ETSI TS 119 612 (XML Trusted List / LOTL) は未実装
 - Wallet Provider は鍵アテステーション / アプリ完全性検証を行っていません。Status List の管理 API (Issuer → Status Issuer) は共有シークレットで保護。Status List Token は JWT 形式のみ (CWT 形式は未対応)
 - Verifier 応答への Wallet Attestation 付与は OID4VP 標準の範囲外 (本シナリオ用の拡張)
 - Verifier は Trust List (アクセス証明書) で信頼される前提のため Federation には参加していません。client_id は `x509_san_dns:localhost` (Verifier は 1 つ)
+
+### Federation メタデータの Entity Type (規格 / 独自)
+
+Entity Configuration の `metadata` に載せている Entity Type と、その中身の出典です。`jwks` は OpenID Federation 1.0 の共通メタデータパラメータ (5.2.1) で、どの Type でもその役割のプロトコル鍵 (Federation 鍵とは別) を表します。
+Federation に載せるのは信頼に関わるメタデータだけとし、各サービス独自の API エンドポイントは Federation の外 (`.well-known`) に置いています。
+
+| エンティティ | Entity Type | 区分 | 出典・内容 |
+| --- | --- | --- | --- |
+| 全エンティティ | `federation_entity` | 規格 | OpenID Federation 1.0。`organization_name`、Trust Anchor / Intermediate は `federation_fetch_endpoint` / `federation_list_endpoint` |
+| 機関IdP | `openid_provider` | 規格 | OpenID Federation 1.0 / OpenID Connect Discovery。`client_registration_types_supported: ["automatic"]` |
+| 学認Issuer | `openid_credential_issuer` | 規格 | OpenID4VCI 1.0 / OpenID Federation Wallet Architectures。`/.well-known/openid-credential-issuer` と同一のオブジェクトに、クレデンシャル署名鍵の `jwks` を追加 |
+| 学認Issuer | `oauth_authorization_server` | 規格 | RFC 8414 / OpenID Federation。`/.well-known/oauth-authorization-server` と同一のオブジェクト。`status_list_aggregation_endpoint` は draft-ietf-oauth-status-list が AS メタデータとして登録、`attest_jwt_client_auth` は draft-ietf-oauth-attestation-based-client-auth |
+| 学認Issuer / 学認SP / InCommon SP | `openid_relying_party` | 規格 | OpenID Federation 1.0 (automatic registration) |
+| Wallet Provider | `wallet_provider` | 独自 | `wallet_name`・`attestation_signing_alg_values_supported` (独自)、`jwks` (Wallet Attestation の署名鍵)。登録・Attestation 発行エンドポイントは Federation 外の `/.well-known/wallet-provider` (独自) に掲載。規格上は OpenID Federation Wallet Architectures の `openid_wallet_provider` (中身は OpenID4VP の Wallet Metadata) だが未対応 |
+| 属性Provider | `attribute_provider` | 独自 | `attribute_endpoint`・`attributes_supported` (独自)、`jwks` (属性応答の署名鍵) |
+| Trust List | `trust_list_provider` | 独自 | LoTE Provider の役割。`scheme_operator_name`・`lote_locations`・`lote_signing_alg_values_supported` (独自。指す先は ETSI TS 119 602 の LoTE)、`jwks` (LoTE の署名鍵) |
+| Trust List | `rp_registrar` | 独自 | Registrar の役割 (EUDI ARF 6.4)。`registration_endpoint` (独自) |
+| Status List | `status_list_provider` | 独自 (Type のみ) | 中身は他の規格で定義済みのパラメータだけ: `status_list_aggregation_endpoint` (draft-ietf-oauth-status-list)、`jwks` (Status List Token の署名鍵) |
+| Verifier | (参加しない) | — | Trust List (アクセス証明書) で信頼する設計。Federation に参加させる場合は OpenID Federation Wallet Architectures の `openid_credential_verifier` |
