@@ -12,20 +12,46 @@ import (
 	"time"
 )
 
-// Display names of entity identifiers ("学認Issuer" instead of "http://localhost:8720"),
-// fetched from the demo console (DEMO_CONSOLE /api/entity-names). Without the console the
-// identifiers are shown as-is.
+// Display names of entity identifiers ("GakuNin Issuer" or its Japanese name instead of
+// "http://localhost:8720") in Japanese and English, fetched from the demo console
+// (DEMO_CONSOLE /api/entity-names). Without the console the identifiers are shown as-is.
 
 type entityNames struct {
 	mu      sync.Mutex
 	loaded  bool
 	lastTry time.Time
-	names   map[string]string
+	names   map[string]map[string]string // lang -> entity ID -> name
 	encoded *regexp.Regexp
 	plain   *regexp.Regexp
 }
 
 var displayNames entityNames
+
+// setNames installs the name tables (lang -> entity ID -> name) and builds the matchers.
+func (n *entityNames) setNames(names map[string]map[string]string) {
+	idSet := map[string]bool{}
+	for _, m := range names {
+		for id := range m {
+			idSet[id] = true
+		}
+	}
+	ids := make([]string, 0, len(idSet))
+	for id := range idSet {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return len(ids[i]) > len(ids[j]) })
+	enc := make([]string, len(ids))
+	plain := make([]string, len(ids))
+	for i, id := range ids {
+		enc[i] = regexp.QuoteMeta(url.QueryEscape(id))
+		plain[i] = regexp.QuoteMeta(id)
+	}
+	n.names = names
+	n.encoded = regexp.MustCompile(strings.Join(enc, "|"))
+	// entity ID not followed by more port digits, optional trailing path
+	n.plain = regexp.MustCompile(`(` + strings.Join(plain, "|") + `)([0-9]?)((?:/[^\s"'<>,;:)\]]*)?)`)
+	n.loaded = true
+}
 
 func (n *entityNames) load() {
 	n.mu.Lock()
@@ -43,60 +69,59 @@ func (n *entityNames) load() {
 		return
 	}
 	defer resp.Body.Close()
-	var names map[string]string
+	var names map[string]map[string]string
 	if resp.StatusCode != http.StatusOK || json.NewDecoder(resp.Body).Decode(&names) != nil || len(names) == 0 {
 		return
 	}
-	ids := make([]string, 0, len(names))
-	for id := range names {
-		ids = append(ids, id)
-	}
-	sort.Slice(ids, func(i, j int) bool { return len(ids[i]) > len(ids[j]) })
-	enc := make([]string, len(ids))
-	plain := make([]string, len(ids))
-	for i, id := range ids {
-		enc[i] = regexp.QuoteMeta(url.QueryEscape(id))
-		plain[i] = regexp.QuoteMeta(id)
-	}
-	n.names = names
-	n.encoded = regexp.MustCompile(strings.Join(enc, "|"))
-	// entity ID not followed by more port digits, optional trailing path
-	n.plain = regexp.MustCompile(`(` + strings.Join(plain, "|") + `)([0-9]?)((?:/[^\s"'<>,;:)\]]*)?)`)
-	n.loaded = true
+	n.setNames(names)
 }
 
-// NameOf returns the display name of an entity identifier (or the identifier itself).
-func NameOf(id string) string {
+func (n *entityNames) lookup(id, lang string) (string, bool) {
+	m := n.names[lang]
+	if m == nil {
+		m = n.names["ja"]
+	}
+	name, ok := m[id]
+	return name, ok
+}
+
+// NameOf returns the display name of an entity identifier in lang (or the identifier itself).
+func NameOf(id, lang string) string {
 	displayNames.load()
 	displayNames.mu.Lock()
 	defer displayNames.mu.Unlock()
-	if name, ok := displayNames.names[strings.TrimSuffix(id, "/")]; ok {
+	if name, ok := displayNames.lookup(strings.TrimSuffix(id, "/"), lang); ok {
 		return name
 	}
 	return id
 }
 
 // Humanize replaces entity identifiers (also URL-encoded ones and URLs under them) in a message.
-func Humanize(s string) string {
+func Humanize(s, lang string) string {
 	displayNames.load()
 	displayNames.mu.Lock()
 	defer displayNames.mu.Unlock()
 	if !displayNames.loaded || s == "" {
 		return s
 	}
-	s = displayNames.encoded.ReplaceAllStringFunc(s, func(m string) string {
-		id, _ := url.QueryUnescape(m)
-		return displayNames.names[id]
-	})
-	return displayNames.plain.ReplaceAllStringFunc(s, func(m string) string {
+	encoded := func(s string) string {
+		return displayNames.encoded.ReplaceAllStringFunc(s, func(m string) string {
+			id, _ := url.QueryUnescape(m)
+			name, _ := displayNames.lookup(id, lang)
+			return name
+		})
+	}
+	// entity URLs first (their paths may contain URL-encoded entity IDs), then remaining encoded IDs
+	s = displayNames.plain.ReplaceAllStringFunc(s, func(m string) string {
 		g := displayNames.plain.FindStringSubmatch(m)
 		if g[2] != "" { // a different port (e.g. :87201): not this entity
 			return m
 		}
-		name := displayNames.names[g[1]]
+		name, _ := displayNames.lookup(g[1], lang)
 		if g[3] != "" && g[3] != "/" {
-			return name + " (" + g[3] + ")"
+			return name + " (" + encoded(g[3]) + ")"
 		}
 		return name
 	})
+	return encoded(s)
 }

@@ -1,4 +1,5 @@
 import { emit } from '../common/events.js'
+import { bi, t } from '../common/i18n.js'
 import { randomInt } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -57,7 +58,7 @@ type Persisted = {
  *  - HTTP GET with content negotiation on `application/statuslist+jwt`, CORS enabled
  *  - Historical resolution via the `time` query parameter
  *  - Status List Aggregation (`status_lists`)
- * The 学認Issuer (Issuer of the Referenced Tokens) updates statuses through a management API.
+ * The GakuNin Issuer (Issuer of the Referenced Tokens) updates statuses through a management API.
  * Key resolution / trust: the token signing key is published as `status_list_provider.jwks` in the
  * entity's OpenID Federation metadata.
  */
@@ -183,7 +184,7 @@ export const createStatusList = (opts: {
           <p class="mut">owner: ${esc(l.owner)} / bits=${l.list.bits} / size=${l.list.size} / ttl=${TTL_SEC}s /
           <a href="/lists/${encodeURIComponent(l.id)}">Status List Token</a></p>
           <table><tr><th>idx</th><th>Referenced Token</th><th>status</th></tr>${rows}</table>
-          <p class="mut">履歴 (historical resolution, <code>?time=</code>):<br>${history}</p></section>`
+          <p class="mut">${t('履歴', 'History')} (historical resolution, <code>?time=</code>):<br>${history}</p></section>`
       })
       .join('')
     return c.html(
@@ -207,7 +208,7 @@ export const createStatusList = (opts: {
     l.allocated.add(idx)
     if (body.label) l.labels.set(idx, body.label)
     persist()
-    emit('Status List', 'info', `idx ${idx} を割当 (${body.label ?? ''})`, listUri(l.id))
+    emit('Status List', 'info', bi(`idx ${idx} を割当 (${body.label ?? ''})`, `Allocated idx ${idx} (${body.label ?? ''})`), listUri(l.id))
     return c.json({ status_list: { idx, uri: listUri(l.id) } }, 201)
   })
 
@@ -225,7 +226,7 @@ export const createStatusList = (opts: {
     l.list.set(idx, status)
     snapshot(l)
     persist()
-    emit('Status List', status === StatusType.VALID ? 'ok' : 'info', `idx ${idx} を ${statusTypeName(status)} に更新`, listUri(l.id))
+    emit('Status List', status === StatusType.VALID ? 'ok' : 'info', bi(`idx ${idx} を ${statusTypeName(status)} に更新`, `Set idx ${idx} to ${statusTypeName(status)}`), listUri(l.id))
     return c.json({ idx, status, status_name: statusTypeName(status) })
   })
 

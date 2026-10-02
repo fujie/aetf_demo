@@ -1,5 +1,6 @@
 import { DEMO_CONSOLE_URL } from '../config.js'
 import QRCode from 'qrcode'
+import { currentLang, langSwitcherHtml, t } from './i18n.js'
 import { humanize, nameOf } from './names.js'
 
 export const esc = (s: unknown) =>
@@ -10,7 +11,7 @@ export const esc = (s: unknown) =>
     .replace(/"/g, '&quot;')
 
 export const page = (title: string, body: string, opts: { refresh?: number } = {}) => `<!doctype html>
-<html lang="ja"><head><meta charset="utf-8">
+<html lang="${currentLang()}"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 ${opts.refresh ? `<meta http-equiv="refresh" content="${opts.refresh}">` : ''}
 <title>${esc(title)}</title>
@@ -32,7 +33,7 @@ ${opts.refresh ? `<meta http-equiv="refresh" content="${opts.refresh}">` : ''}
   .mut { color:var(--mut); font-size: 13px; }
   input { padding:6px; font-size:14px; }
 </style></head>
-<body><header><h1>${esc(title)}</h1><a href="${DEMO_CONSOLE_URL}" style="color:#cfe3ef;font-size:13px">◎ デモコンソール</a></header><main>${body}</main></body></html>`
+<body><header><h1>${esc(title)}</h1><span style="font-size:13px;color:#cfe3ef">${langSwitcherHtml('color:#cfe3ef')} &nbsp; <a href="${DEMO_CONSOLE_URL}" style="color:#cfe3ef">◎ ${t('デモコンソール', 'Demo console')}</a></span></header><main>${body}</main></body></html>`
 
 export const qrSvg = async (text: string) =>
   QRCode.toString(text, { type: 'svg', margin: 1, width: 260, errorCorrectionLevel: 'L' })

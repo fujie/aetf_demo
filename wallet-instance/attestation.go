@@ -57,9 +57,9 @@ func (i *Instance) walletProviderMetadata() (*ResolvedChain, map[string]any, err
 func (i *Instance) Register() error {
 	chain, md, err := i.walletProviderMetadata()
 	if err != nil {
-		return i.fail("Wallet Provider を信頼できません", fmt.Errorf("wallet provider is not trusted: %w", err))
+		return i.fail(M("Wallet Provider を信頼できません", "Cannot trust the Wallet Provider"), fmt.Errorf("wallet provider is not trusted: %w", err))
 	}
-	i.ok("Wallet Provider を OpenID Federation で確認", "%s", strings.Join(chain.Path, " → "))
+	i.ok(M("Wallet Provider を OpenID Federation で確認", "Wallet Provider verified through OpenID Federation"), S("%s", strings.Join(chain.Path, " → ")))
 	endpoint, _ := md["wallet_instance_registration_endpoint"].(string)
 	pub := i.instanceKey.PublicKey()
 	var res struct {
@@ -69,7 +69,7 @@ func (i *Instance) Register() error {
 		return err
 	}
 	i.state.WalletInstanceID = res.WalletInstanceID
-	i.ok("Wallet Provider に Wallet Instance を登録", "%s", res.WalletInstanceID)
+	i.ok(M("Wallet Provider に Wallet Instance を登録", "Registered the Wallet Instance with the Wallet Provider"), S("%s", res.WalletInstanceID))
 	return i.save()
 }
 
@@ -86,7 +86,8 @@ func (i *Instance) EnsureRegistered() error {
 	}
 	if i.state.WalletInstanceID != prev {
 		i.state.WalletAttestation = ""
-		i.info("Wallet Provider に再登録", "以前の登録 %s が見つからないため新しい ID で登録しました", prev)
+		i.info(M("Wallet Provider に再登録", "Re-registered with the Wallet Provider"),
+			M(fmt.Sprintf("以前の登録 %s が見つからないため新しい ID で登録しました", prev), fmt.Sprintf("The previous registration %s was not found, so a new ID was registered", prev)))
 		return i.save()
 	}
 	return nil
@@ -128,7 +129,7 @@ func (i *Instance) RefreshAttestation() error {
 		// a revoked / unknown instance must not keep using its previous attestation
 		i.state.WalletAttestation = ""
 		_ = i.save()
-		return i.fail("Wallet Attestation の取得に失敗", err)
+		return i.fail(M("Wallet Attestation の取得に失敗", "Failed to obtain a Wallet Attestation"), err)
 	}
 	jwks, err := JWKSFromMetadata(md)
 	if err != nil {
@@ -138,7 +139,9 @@ func (i *Instance) RefreshAttestation() error {
 		return fmt.Errorf("received wallet attestation is invalid: %w", err)
 	}
 	i.state.WalletAttestation = res.WalletAttestation
-	i.ok("Wallet Attestation を取得", "Wallet Provider の鍵 (Federation メタデータ) で署名を確認、有効期限 %s", i.AttestationExpiry().Format("15:04:05"))
+	exp := i.AttestationExpiry().Format("15:04:05")
+	i.ok(M("Wallet Attestation を取得", "Obtained a Wallet Attestation"),
+		M("Wallet Provider の鍵 (Federation メタデータ) で署名を確認、有効期限 "+exp, "Signature verified with the Wallet Provider key (federation metadata), expires "+exp))
 	return i.save()
 }
 
@@ -161,7 +164,8 @@ func (i *Instance) EnsureAttestation() error {
 					return nil
 				}
 				if err == nil {
-					i.info("保持中の Wallet Attestation が無効", "Status List idx %d = %s のため再取得します", st.Idx, StatusTypeName(st.Status))
+					i.info(M("保持中の Wallet Attestation が無効", "The held Wallet Attestation is not valid"),
+						M(fmt.Sprintf("Status List idx %d = %s のため再取得します", st.Idx, StatusTypeName(st.Status)), fmt.Sprintf("Status List idx %d = %s, fetching a new one", st.Idx, StatusTypeName(st.Status))))
 				}
 			}
 		}
@@ -215,7 +219,7 @@ func (t *attestationTransport) RoundTrip(req *http.Request) (*http.Response, err
 		req = req.Clone(req.Context())
 		req.Header.Set(headerAttestation, t.inst.state.WalletAttestation)
 		req.Header.Set(headerAttestationPoP, pop)
-		t.inst.info("Wallet Attestation + PoP を付与して送信", "%s %s (PoP aud=%s)", req.Method, req.URL, aud)
+		t.inst.info(M("Wallet Attestation + PoP を付与して送信", "Sending with Wallet Attestation + PoP"), S("%s %s (PoP aud=%s)", req.Method, req.URL, aud))
 	}
 	return t.base.RoundTrip(req)
 }

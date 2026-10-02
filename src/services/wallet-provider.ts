@@ -1,4 +1,5 @@
 import { emit } from '../common/events.js'
+import { bi, pick, t } from '../common/i18n.js'
 import { randomUUID } from 'node:crypto'
 import { type Context, Hono } from 'hono'
 import * as jose from 'jose'
@@ -30,7 +31,11 @@ type WalletInstance = {
  *              for subsequently issued attestations; attestations issued before stay invalid.
  */
 type InstanceState = 'active' | 'suspended' | 'revoked'
-const STATE_LABEL: Record<InstanceState, string> = { active: '有効', suspended: '一時停止', revoked: '失効' }
+const STATE_LABEL: Record<InstanceState, { ja: string; en: string }> = {
+  active: { ja: '有効', en: 'active' },
+  suspended: { ja: '一時停止', en: 'suspended' },
+  revoked: { ja: '失効', en: 'revoked' },
+}
 
 const WALLET_STATUS_LIST_ID = 'wallet-provider-1'
 
@@ -95,25 +100,27 @@ export const createWalletProvider = (opts: {
       `<form style="display:inline" method="post" action="/wallet-instances/${encodeURIComponent(i.id)}/${action}"><button>${label}</button></form>`
     const actions = (i: WalletInstance) =>
       i.state === 'active'
-        ? `${btn(i, 'suspend', '一時停止')} ${btn(i, 'revoke', '失効')}`
+        ? `${btn(i, 'suspend', t('一時停止', 'Suspend'))} ${btn(i, 'revoke', t('失効', 'Revoke'))}`
         : i.state === 'suspended'
-          ? `${btn(i, 'reactivate', '再有効化')} ${btn(i, 'revoke', '失効')}`
-          : btn(i, 'reactivate', '再有効化 (新しい Status List エントリ)')
+          ? `${btn(i, 'reactivate', t('再有効化', 'Reactivate'))} ${btn(i, 'revoke', t('失効', 'Revoke'))}`
+          : btn(i, 'reactivate', t('再有効化 (新しい Status List エントリ)', 'Reactivate (new Status List entry)'))
     const rows = [...instances.values()]
       .map(
         (i) => `<tr><td><code>${esc(i.id)}</code></td><td>${esc(i.registeredAt)}</td>
         <td>${i.attestationsIssued}</td>
-        <td>${i.status ? `idx ${i.status.idx}` : ''}${i.retiredStatus.length ? `<br><span class="mut">旧: ${i.retiredStatus.map((r) => `idx ${r.idx} (INVALID)`).join(', ')}</span>` : ''}</td>
-        <td class="${i.state === 'active' ? 'ok' : 'ng'}">${STATE_LABEL[i.state]}</td><td>${actions(i)}</td></tr>`
+        <td>${i.status ? `idx ${i.status.idx}` : ''}${i.retiredStatus.length ? `<br><span class="mut">${t('旧', 'old')}: ${i.retiredStatus.map((r) => `idx ${r.idx} (INVALID)`).join(', ')}</span>` : ''}</td>
+        <td class="${i.state === 'active' ? 'ok' : 'ng'}">${pick(STATE_LABEL[i.state])}</td><td>${actions(i)}</td></tr>`
       )
       .join('')
     return c.html(
       page(
         'Wallet Provider',
         `<section><p>Entity ID: <code>${esc(entityId)}</code> / <a href="/.well-known/openid-federation">Entity Configuration</a></p>
-        <p class="mut">一時停止は Status List を SUSPENDED に、失効は INVALID にします。一時停止からの再有効化は同じエントリを VALID に戻し、
-        失効からの再有効化は INVALID が終端状態のため新しいエントリを割り当てます (以後に発行する Wallet Attestation から有効。失効前の Attestation は無効のまま)。</p></section>
-        <section><h3>Wallet Instances</h3><table><tr><th>ID</th><th>登録日時</th><th>Attestation発行数</th><th>Status List</th><th>状態</th><th></th></tr>${rows}</table></section>`
+        <p class="mut">${t(
+          '一時停止は Status List を SUSPENDED に、失効は INVALID にします。一時停止からの再有効化は同じエントリを VALID に戻し、失効からの再有効化は INVALID が終端状態のため新しいエントリを割り当てます (以後に発行する Wallet Attestation から有効。失効前の Attestation は無効のまま)。',
+          'Suspending sets the Status List entry to SUSPENDED, revoking sets it to INVALID. Reactivating a suspended instance sets the same entry back to VALID; since INVALID is final, reactivating a revoked instance allocates a new entry (effective for attestations issued afterwards; earlier attestations stay invalid).'
+        )}</p></section>
+        <section><h3>Wallet Instances</h3><table><tr><th>ID</th><th>${t('登録日時', 'Registered')}</th><th>${t('Attestation発行数', 'Attestations issued')}</th><th>Status List</th><th>${t('状態', 'Status')}</th><th></th></tr>${rows}</table></section>`
       )
     )
   })
@@ -146,7 +153,7 @@ export const createWalletProvider = (opts: {
       retiredStatus: [],
     })
     persist()
-    emit('Wallet Provider', 'ok', 'Wallet Instance を登録', id)
+    emit('Wallet Provider', 'ok', bi('Wallet Instance を登録', 'Registered a Wallet Instance'), id)
     return c.json({ wallet_instance_id: id }, 201)
   })
 
@@ -160,26 +167,55 @@ export const createWalletProvider = (opts: {
       if (action === 'suspend' && inst.state === 'active') {
         await setStatus(inst, 2)
         inst.state = 'suspended'
-        emit('Wallet Provider', 'info', 'Wallet Instance を一時停止', `${inst.id} / Status List idx ${inst.status?.idx} を SUSPENDED に更新`)
+        emit(
+          'Wallet Provider',
+          'info',
+          bi('Wallet Instance を一時停止', 'Suspended the Wallet Instance'),
+          bi(`${inst.id} / Status List idx ${inst.status?.idx} を SUSPENDED に更新`, `${inst.id} / Status List idx ${inst.status?.idx} set to SUSPENDED`)
+        )
       } else if (action === 'revoke' && inst.state !== 'revoked') {
         // publish the revocation so that already issued Wallet Attestations are rejected too
         await setStatus(inst, 1)
         inst.state = 'revoked'
-        emit('Wallet Provider', 'info', 'Wallet Instance を失効', `${inst.id} / Status List idx ${inst.status?.idx} を INVALID に更新 (発行済み Wallet Attestation も無効)`)
+        emit(
+          'Wallet Provider',
+          'info',
+          bi('Wallet Instance を失効', 'Revoked the Wallet Instance'),
+          bi(
+            `${inst.id} / Status List idx ${inst.status?.idx} を INVALID に更新 (発行済み Wallet Attestation も無効)`,
+            `${inst.id} / Status List idx ${inst.status?.idx} set to INVALID (issued Wallet Attestations become invalid too)`
+          )
+        )
       } else if (action === 'reactivate' && inst.state === 'suspended') {
         await setStatus(inst, 0)
         inst.state = 'active'
-        emit('Wallet Provider', 'ok', 'Wallet Instance を再有効化', `${inst.id} / Status List idx ${inst.status?.idx} を VALID に戻した (発行済み Wallet Attestation も再び有効)`)
+        emit(
+          'Wallet Provider',
+          'ok',
+          bi('Wallet Instance を再有効化', 'Reactivated the Wallet Instance'),
+          bi(
+            `${inst.id} / Status List idx ${inst.status?.idx} を VALID に戻した (発行済み Wallet Attestation も再び有効)`,
+            `${inst.id} / Status List idx ${inst.status?.idx} set back to VALID (issued Wallet Attestations are valid again)`
+          )
+        )
       } else if (action === 'reactivate' && inst.state === 'revoked') {
         // INVALID is terminal: retire the entry and allocate a fresh one for new attestations
         if (inst.status) inst.retiredStatus.push(inst.status)
         inst.status = await allocateStatus(inst.id)
         inst.state = 'active'
-        emit('Wallet Provider', 'ok', 'Wallet Instance を再有効化', `${inst.id} / 新しい Status List idx ${inst.status.idx} を割当 (失効前の Wallet Attestation は無効のまま、Wallet は再取得が必要)`)
+        emit(
+          'Wallet Provider',
+          'ok',
+          bi('Wallet Instance を再有効化', 'Reactivated the Wallet Instance'),
+          bi(
+            `${inst.id} / 新しい Status List idx ${inst.status.idx} を割当 (失効前の Wallet Attestation は無効のまま、Wallet は再取得が必要)`,
+            `${inst.id} / allocated the new Status List idx ${inst.status.idx} (attestations issued before the revocation stay invalid; the wallet must fetch a new one)`
+          )
+        )
       }
     } catch (e) {
       console.error(e)
-      emit('Wallet Provider', 'error', 'Wallet Instance の状態変更に失敗', (e as Error).message)
+      emit('Wallet Provider', 'error', bi('Wallet Instance の状態変更に失敗', 'Failed to change the Wallet Instance state'), (e as Error).message)
     }
     persist()
     return c.redirect('/', 303)
@@ -203,7 +239,7 @@ export const createWalletProvider = (opts: {
         maxTokenAge: '2m',
       })
     } catch (e) {
-      emit('Wallet Provider', 'error', 'Wallet Attestation の発行を拒否', (e as Error).message)
+      emit('Wallet Provider', 'error', bi('Wallet Attestation の発行を拒否', 'Refused to issue a Wallet Attestation'), (e as Error).message)
       return c.json({ error: 'invalid_request', error_description: (e as Error).message }, 400)
     }
     const now = Math.floor(Date.now() / 1000)
@@ -223,7 +259,12 @@ export const createWalletProvider = (opts: {
     )
     instance.attestationsIssued += 1
     persist()
-    emit('Wallet Provider', 'ok', 'Wallet Attestation を発行', `${instance.id} (有効期限 ${ATTESTATION_LIFETIME_SEC / 60} 分)`)
+    emit(
+      'Wallet Provider',
+      'ok',
+      bi('Wallet Attestation を発行', 'Issued a Wallet Attestation'),
+      bi(`${instance.id} (有効期限 ${ATTESTATION_LIFETIME_SEC / 60} 分)`, `${instance.id} (valid for ${ATTESTATION_LIFETIME_SEC / 60} minutes)`)
+    )
     return c.json({ wallet_attestation: attestation })
   })
 

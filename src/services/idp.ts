@@ -1,4 +1,5 @@
 import { emit } from '../common/events.js'
+import { type Bi, bi, pick, t } from '../common/i18n.js'
 import { randomUUID } from 'node:crypto'
 import { Hono } from 'hono'
 import * as jose from 'jose'
@@ -7,7 +8,7 @@ import { esc, page, trustChainHtml, escMsg } from '../common/html.js'
 import { createFederationEntity, mountFederationEndpoints } from '../federation/entity.js'
 import { type TrustAnchorConfig, resolveEntityMetadata } from '../federation/resolver.js'
 
-/** Demo accounts of the institution (機関). */
+/** Demo accounts of the institution. */
 export const IDP_USERS: Record<
   string,
   { password: string; claims: Record<string, unknown> }
@@ -51,16 +52,16 @@ type AuthzRequest = {
 
 /**
  * Attribute release policy decided from the RP's Trust Chain:
- *  - RPs of the home federation (学認: chain through NII) get the full attribute set
+ *  - RPs of the home federation (GakuNin: chain through NII) get the full attribute set
  *  - RPs of other federations reached through eduGAIN (e.g. InCommon) get a minimal,
  *    Research & Scholarship-like set (inter-federation)
  */
-type AttributeRelease = { policy: string; claims: string[] }
+type AttributeRelease = { policy: Bi; claims: string[] }
 const FULL_RELEASE = ['name', 'family_name', 'given_name', 'email', 'eduPersonPrincipalName', 'eduPersonAffiliation', 'organization']
 const INTERFEDERATION_RELEASE = ['name', 'email', 'eduPersonPrincipalName', 'eduPersonAffiliation', 'organization']
 
 /**
- * 機関IdP: a minimal OpenID Provider. Relying Parties (e.g. the 学認Issuer configured as a 学認SP)
+ * Institution IdP: a minimal OpenID Provider. Relying Parties (e.g. the GakuNin Issuer configured as a GakuNin SP)
  * are not pre-registered: they are accepted through OpenID Federation automatic registration,
  * i.e. by resolving a Trust Chain for the `client_id` and using the resolved
  * `openid_relying_party` metadata (redirect_uris, jwks).
@@ -71,20 +72,23 @@ export const createIdp = (opts: {
   signingKey: SigningKey
   authorityHints: string[]
   anchors: TrustAnchorConfig[]
-  /** Intermediate Authority of the IdP's own federation (学認 = NII). */
+  /** Intermediate Authority of the IdP's own federation (GakuNin = NII). */
   homeFederation: string
 }) => {
   const releaseFor = (path: string[]): AttributeRelease =>
     path.includes(opts.homeFederation)
-      ? { policy: '学認 (同一フェデレーション) — 全属性', claims: FULL_RELEASE }
-      : { policy: 'eduGAIN 経由の他フェデレーション — R&S 相当の最小属性', claims: INTERFEDERATION_RELEASE }
+      ? { policy: bi('学認 (同一フェデレーション) — 全属性', 'GakuNin (same federation) — all attributes'), claims: FULL_RELEASE }
+      : {
+          policy: bi('eduGAIN 経由の他フェデレーション — R&S 相当の最小属性', 'Another federation via eduGAIN — minimal R&S-like attributes'),
+          claims: INTERFEDERATION_RELEASE,
+        }
   const { entityId } = opts
   const entity = createFederationEntity({
     entityId,
     federationKey: opts.federationKey,
     authorityHints: opts.authorityHints,
     metadata: {
-      federation_entity: { organization_name: 'Example University (機関IdP)' },
+      federation_entity: { organization_name: 'Example University (Institution IdP)' },
       openid_provider: {
         issuer: entityId,
         authorization_endpoint: `${entityId}/authorize`,
@@ -118,9 +122,9 @@ export const createIdp = (opts: {
   app.get('/', (c) =>
     c.html(
       page(
-        '機関IdP (Example University)',
+        t('機関IdP (Example University)', 'Institution IdP (Example University)'),
         `<section><p>Entity ID: <code>${esc(entityId)}</code> / <a href="/.well-known/openid-federation">Entity Configuration</a></p>
-        <p>デモアカウント: ${Object.keys(IDP_USERS)
+        <p>${t('デモアカウント', 'Demo accounts')}: ${Object.keys(IDP_USERS)
           .map((u) => `<code>${u}</code>`)
           .join(', ')} (password: <code>password</code>)</p></section>`
       )
@@ -141,7 +145,7 @@ export const createIdp = (opts: {
       return c.html(
         page(
           'Error',
-          `<p class="ng">RP ${escMsg(clientId)} をフェデレーションで確認できません</p><pre>${escMsg((e as Error).message)}</pre>`
+          `<p class="ng">${t(`RP ${escMsg(clientId)} をフェデレーションで確認できません`, `RP ${escMsg(clientId)} cannot be verified through the federation`)}</p><pre>${escMsg((e as Error).message)}</pre>`
         ),
         400
       )
@@ -163,16 +167,16 @@ export const createIdp = (opts: {
     const release = releaseFor(rp.chain.path)
     return c.html(
       page(
-        '機関IdP ログイン',
+        t('機関IdP ログイン', 'Institution IdP login'),
         `<section>
-          <p><b>${esc(rp.metadata.client_name ?? clientId)}</b> がログインを要求しています。</p>
-          <p class="mut">OpenID Federation で RP を確認しました: ${trustChainHtml(rp.chain.path)}</p>
-          <p>送信する属性 (${esc(release.policy)}):<br>${release.claims.map((x) => `<code>${esc(x)}</code>`).join(' ')}</p>
+          <p>${t(`<b>${esc(rp.metadata.client_name ?? clientId)}</b> がログインを要求しています。`, `<b>${esc(rp.metadata.client_name ?? clientId)}</b> requests a login.`)}</p>
+          <p class="mut">${t('OpenID Federation で RP を確認しました', 'RP verified through OpenID Federation')}: ${trustChainHtml(rp.chain.path)}</p>
+          <p>${t('送信する属性', 'Attributes to be released')} (${esc(pick(release.policy))}):<br>${release.claims.map((x) => `<code>${esc(x)}</code>`).join(' ')}</p>
           <form method="post" action="/login">
             <input type="hidden" name="txn" value="${txn}">
-            <p>ユーザー名 <input name="username" value="taro"></p>
-            <p>パスワード <input name="password" type="password" value="password"></p>
-            <button type="submit">ログイン</button>
+            <p>${t('ユーザー名', 'Username')} <input name="username" value="taro"></p>
+            <p>${t('パスワード', 'Password')} <input name="password" type="password" value="password"></p>
+            <button type="submit">${t('ログイン', 'Log in')}</button>
           </form></section>`
       )
     )
@@ -185,7 +189,7 @@ export const createIdp = (opts: {
     const user = IDP_USERS[username]
     if (!txn) return c.html(page('Error', '<p class="ng">unknown transaction</p>'), 400)
     if (!user || user.password !== form.password) {
-      return c.html(page('Error', '<p class="ng">ユーザー名またはパスワードが違います</p>'), 401)
+      return c.html(page('Error', `<p class="ng">${t('ユーザー名またはパスワードが違います', 'Wrong username or password')}</p>`), 401)
     }
     pending.delete(String(form.txn))
     const code = randomUUID()
@@ -193,7 +197,15 @@ export const createIdp = (opts: {
     const redirect = new URL(txn.redirectUri)
     redirect.searchParams.set('code', code)
     if (txn.state) redirect.searchParams.set('state', txn.state)
-    emit('機関IdP', 'ok', `ユーザー ${username} を認証し、${txn.clientName ?? txn.clientId} へ認可コードを発行`, `RP は OpenID Federation で確認: ${txn.trustChainPath.join(' → ')}`)
+    emit(
+      '機関IdP',
+      'ok',
+      bi(
+        `ユーザー ${username} を認証し、${txn.clientName ?? txn.clientId} へ認可コードを発行`,
+        `Authenticated user ${username} and issued an authorization code to ${txn.clientName ?? txn.clientId}`
+      ),
+      bi(`RP は OpenID Federation で確認: ${txn.trustChainPath.join(' → ')}`, `RP verified through OpenID Federation: ${txn.trustChainPath.join(' → ')}`)
+    )
     return c.redirect(redirect.toString(), 302)
   })
 
@@ -217,7 +229,7 @@ export const createIdp = (opts: {
         maxTokenAge: '5m',
       })
     } catch (e) {
-      emit('機関IdP', 'error', 'RP のクライアント認証 (private_key_jwt) に失敗', (e as Error).message)
+      emit('機関IdP', 'error', bi('RP のクライアント認証 (private_key_jwt) に失敗', 'RP client authentication (private_key_jwt) failed'), (e as Error).message)
       return c.json(
         { error: 'invalid_client', error_description: (e as Error).message },
         401
@@ -238,7 +250,15 @@ export const createIdp = (opts: {
       },
       'JWT'
     )
-    emit('機関IdP', 'ok', `ID Token を発行 (${code.clientName ?? code.clientId})`, `属性リリース: ${code.release.policy} [${code.release.claims.join(', ')}] / RP: ${code.trustChainPath.join(' → ')}`)
+    emit(
+      '機関IdP',
+      'ok',
+      bi(`ID Token を発行 (${code.clientName ?? code.clientId})`, `Issued an ID Token (${code.clientName ?? code.clientId})`),
+      bi(
+        `属性リリース: ${code.release.policy.ja} [${code.release.claims.join(', ')}] / RP: ${code.trustChainPath.join(' → ')}`,
+        `Attribute release: ${code.release.policy.en} [${code.release.claims.join(', ')}] / RP: ${code.trustChainPath.join(' → ')}`
+      )
+    )
     return c.json({ access_token: randomUUID(), token_type: 'Bearer', id_token: idToken })
   })
 

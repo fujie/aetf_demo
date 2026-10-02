@@ -1,4 +1,5 @@
 import { emit } from '../common/events.js'
+import { bi, t } from '../common/i18n.js'
 import { createHash, webcrypto } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -158,8 +159,8 @@ export const createTrustList = async (opts: {
     const actions = (r: Registration) => {
       const btn = (action: string, label: string) =>
         `<form style="display:inline" method="post" action="/registrar/registrations/${encodeURIComponent(r.clientId)}/${action}"><button>${label}</button></form>`
-      if (r.status === 'active') return `${btn('suspend', '一時停止')} ${btn('cancel', '登録取消')}`
-      if (r.status === 'suspended') return `${btn('resume', '再開')} ${btn('cancel', '登録取消')}`
+      if (r.status === 'active') return `${btn('suspend', t('一時停止', 'Suspend'))} ${btn('cancel', t('登録取消', 'Cancel registration'))}`
+      if (r.status === 'suspended') return `${btn('resume', t('再開', 'Resume'))} ${btn('cancel', t('登録取消', 'Cancel registration'))}`
       return ''
     }
     const rows = [...registrations.values()]
@@ -178,8 +179,8 @@ export const createTrustList = async (opts: {
         `<section><p>Entity ID: <code>${esc(entityId)}</code> / <a href="/.well-known/openid-federation">Entity Configuration</a></p>
         <p>LoTE (ETSI TS 119 602): <a href="/lote/wrpac-providers.jwt">wrpac-providers.jwt</a> (JAdES) /
         <a href="/lote/wrpac-providers.json">JSON</a> / Access CA: <a href="/ca/cert">certificate</a>, <a href="/ca/crl">CRL</a></p></section>
-        <section><h3>Registrar: 登録済み Relying Party</h3>
-        <table><tr><th>client_id</th><th>組織</th><th>利用目的 / 要求属性</th><th>Access Certificate (WRPAC)</th><th>状態</th><th></th></tr>${rows}</table></section>
+        <section><h3>Registrar: ${t('登録済み Relying Party', 'registered Relying Parties')}</h3>
+        <table><tr><th>client_id</th><th>${t('組織', 'Organization')}</th><th>${t('利用目的 / 要求属性', 'Intended use / requested claims')}</th><th>Access Certificate (WRPAC)</th><th>${t('状態', 'Status')}</th><th></th></tr>${rows}</table></section>
         <section><h3>WRPAC Providers LoTE (LoTESequenceNumber ${lote.ListAndSchemeInformation.LoTESequenceNumber})</h3>
         <pre>${esc(JSON.stringify(lote, null, 2))}</pre></section>`
       )
@@ -216,7 +217,7 @@ export const createTrustList = async (opts: {
         maxTokenAge: '5m',
       }))
     } catch (e) {
-      emit('Trust List', 'error', 'RP 登録要求を拒否', (e as Error).message)
+      emit('Trust List', 'error', bi('RP 登録要求を拒否', 'RP registration request rejected'), (e as Error).message)
       return c.json({ error: 'invalid_request', error_description: (e as Error).message }, 400)
     }
     const p = payload as Record<string, unknown>
@@ -249,7 +250,13 @@ export const createTrustList = async (opts: {
     const publicKey = (await webcrypto.subtle.importKey('jwk', publicJwk as JsonWebKey, { name: 'ECDSA', namedCurve: 'P-256' }, true, ['verify'])) as CryptoKey
     const cert = await accessCa.issue({ ...reg, publicKey })
     console.log(`[trust-list] registered ${clientId}; WRPAC serial ${cert.serialNumber}`)
-    emit('Trust List', 'ok', `Registrar: ${reg.organizationName} を登録し Access CA がアクセス証明書を発行`, `${clientId}, serial ${cert.serialNumber}, policy NCP-l-eudiwrp`)
+    emit(
+      'Trust List',
+      'ok',
+      bi(
+        `Registrar: ${reg.organizationName} を登録し Access CA がアクセス証明書を発行`,
+        `Registrar: registered ${reg.organizationName}; the Access CA issued an access certificate`
+      ), `${clientId}, serial ${cert.serialNumber}, policy NCP-l-eudiwrp`)
     return c.json(
       {
         client_id: clientId,
@@ -272,7 +279,17 @@ export const createTrustList = async (opts: {
         accessCa.revokeAllOf(reg.clientId, x509.X509CrlReason.cessationOfOperation)
       }
       reg.status = to
-      emit('Trust List', to === 'active' ? 'ok' : 'info', `Registrar: ${reg.organizationName} の登録を ${to} に変更`, to === 'active' ? 'certificateHold を解除' : `アクセス証明書を CRL で失効 (${to === 'suspended' ? 'certificateHold' : 'cessationOfOperation'})`)
+      emit(
+        'Trust List',
+        to === 'active' ? 'ok' : 'info',
+        bi(`Registrar: ${reg.organizationName} の登録を ${to} に変更`, `Registrar: registration of ${reg.organizationName} set to ${to}`),
+        to === 'active'
+          ? bi('certificateHold を解除', 'certificateHold removed')
+          : bi(
+              `アクセス証明書を CRL で失効 (${to === 'suspended' ? 'certificateHold' : 'cessationOfOperation'})`,
+              `access certificate revoked via the CRL (${to === 'suspended' ? 'certificateHold' : 'cessationOfOperation'})`
+            )
+      )
       persistRegistrations()
     }
     return c.redirect('/', 303)

@@ -29,18 +29,11 @@ func newID() string {
 	return hex.EncodeToString(b)
 }
 
-var funcs = template.FuncMap{
+// baseFuncs are the template functions; the language-dependent ones are replaced per request
+// (see langFuncs) on a clone of the templates.
+var baseFuncs = template.FuncMap{
 	"join": strings.Join,
-	"chain": func(p []string) string {
-		names := make([]string, len(p))
-		for i, id := range p {
-			names[i] = NameOf(id)
-		}
-		return strings.Join(names, " → ")
-	},
-	"name":     NameOf,
-	"humanize": Humanize,
-	"time":     func(t time.Time) string { return t.Local().Format("01/02 15:04:05") },
+	"time": func(t time.Time) string { return t.Local().Format("01/02 15:04:05") },
 	"statusName": func(s *StatusResult) string {
 		if s == nil {
 			return "?"
@@ -65,16 +58,49 @@ var funcs = template.FuncMap{
 	},
 }
 
-var tpl = template.Must(template.Must(template.New("layout").Funcs(funcs).Parse(layoutTpl)).Parse(stepsTpl))
+// langFuncs are the template functions bound to the language of one request.
+func langFuncs(lang string) template.FuncMap {
+	return template.FuncMap{
+		"lang": func() string { return lang },
+		"t": func(ja, en string) string {
+			if lang == "en" {
+				return en
+			}
+			return ja
+		},
+		"msg":      func(m Msg) string { return m.In(lang) },
+		"name":     func(id string) string { return NameOf(id, lang) },
+		"humanize": func(s string) string { return Humanize(s, lang) },
+		"chain": func(p []string) string {
+			names := make([]string, len(p))
+			for i, id := range p {
+				names[i] = NameOf(id, lang)
+			}
+			return strings.Join(names, " → ")
+		},
+		"dname":   func(d credentialDisplay) string { return d.NameIn(lang) },
+		"dissuer": func(d credentialDisplay) string { return d.IssuerNameIn(lang) },
+		"label":   func(d credentialDisplay, claim string) string { return d.LabelIn(lang, claim) },
+	}
+}
 
-func init() {
+var tpl = func() *template.Template {
+	funcs := template.FuncMap{}
+	for k, v := range baseFuncs {
+		funcs[k] = v
+	}
+	for k, v := range langFuncs("ja") {
+		funcs[k] = v
+	}
+	t := template.Must(template.Must(template.New("layout").Funcs(funcs).Parse(layoutTpl)).Parse(stepsTpl))
 	for name, body := range map[string]string{
 		"home": homeTpl, "scan": scanTpl, "offer": offerTpl, "request": requestTpl,
 		"result": resultTpl, "credential": credentialTpl, "activity": activityTpl,
 	} {
-		template.Must(tpl.New(name).Parse(body))
+		template.Must(t.New(name).Parse(body))
 	}
-}
+	return t
+}()
 
 type pageData struct {
 	Title   string
@@ -87,19 +113,52 @@ type pageData struct {
 	Console string
 	// Wallet Instance status (Status List entry referenced by the Wallet Attestation)
 	WIStatus *StatusResult
+	Lang     string
+	// links to the current page in Japanese / English
+	LangJa, LangEn string
 }
 
-func (i *Instance) render(w http.ResponseWriter, name string, d pageData) {
+// tr returns ja or en depending on lang.
+func tr(lang, ja, en string) string {
+	if lang == "en" {
+		return en
+	}
+	return ja
+}
+
+func (i *Instance) render(w http.ResponseWriter, r *http.Request, name string, d pageData) {
+	lang, _ := requestLang(r)
 	d.Inst = i
 	d.Expiry = i.AttestationExpiry()
 	d.Console = getenv("DEMO_CONSOLE", "")
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	var body strings.Builder
-	if err := tpl.ExecuteTemplate(&body, name, d); err != nil {
+	d.Lang = lang
+	for _, l := range []string{"ja", "en"} {
+		u := *r.URL
+		q := u.Query()
+		q.Set("lang", l)
+		u.RawQuery = q.Encode()
+		if r.Method != http.MethodGet {
+			u.Path, u.RawQuery = "/", "lang="+l // a POST result cannot be re-requested
+		}
+		if l == "ja" {
+			d.LangJa = u.RequestURI()
+		} else {
+			d.LangEn = u.RequestURI()
+		}
+	}
+	t, err := tpl.Clone()
+	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	if err := tpl.ExecuteTemplate(w, "layout", struct {
+	t.Funcs(langFuncs(lang))
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	var body strings.Builder
+	if err := t.ExecuteTemplate(&body, name, d); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	if err := t.ExecuteTemplate(w, "layout", struct {
 		pageData
 		Body template.HTML
 	}{d, template.HTML(body.String())}); err != nil {
@@ -115,17 +174,19 @@ func (i *Instance) serve(port string) error {
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		st.mu.Lock()
 		defer st.mu.Unlock()
+		lang, _ := requestLang(r)
 		creds, err := i.Credentials(true)
-		d := pageData{Title: "ウォレット", Data: creds, Flash: r.URL.Query().Get("flash")}
+		d := pageData{Title: tr(lang, "ウォレット", "Wallet"), Data: creds, Flash: r.URL.Query().Get("flash")}
 		d.WIStatus, _ = i.AttestationStatus()
 		if err != nil {
 			d.Error = err.Error()
 		}
-		i.render(w, "home", d)
+		i.render(w, r, "home", d)
 	})
 
 	mux.HandleFunc("GET /scan", func(w http.ResponseWriter, r *http.Request) {
-		i.render(w, "scan", pageData{Title: "読み取り"})
+		lang, _ := requestLang(r)
+		i.render(w, r, "scan", pageData{Title: tr(lang, "読み取り", "Scan")})
 	})
 
 	// Dispatch a pasted / deep-linked URI by scheme
@@ -137,7 +198,9 @@ func (i *Instance) serve(port string) error {
 		case strings.HasPrefix(uri, "openid4vp:"):
 			http.Redirect(w, r, "/present?request="+url.QueryEscape(uri), http.StatusSeeOther)
 		default:
-			i.render(w, "scan", pageData{Title: "読み取り", Error: "openid-credential-offer:// または openid4vp: で始まる URI を入力してください"})
+			lang, _ := requestLang(r)
+			i.render(w, r, "scan", pageData{Title: tr(lang, "読み取り", "Scan"),
+				Error: tr(lang, "openid-credential-offer:// または openid4vp: で始まる URI を入力してください", "Enter a URI starting with openid-credential-offer:// or openid4vp:")})
 		}
 	})
 
@@ -146,16 +209,17 @@ func (i *Instance) serve(port string) error {
 		defer st.mu.Unlock()
 		i.steps.begin()
 		preview, err := i.PreviewOffer(r.URL.Query().Get("offer"))
-		d := pageData{Title: "クレデンシャルの受け取り", Steps: i.steps.take()}
+		lang, _ := requestLang(r)
+		d := pageData{Title: tr(lang, "クレデンシャルの受け取り", "Receive credential"), Steps: i.steps.take()}
 		if err != nil {
 			d.Error = err.Error()
-			i.render(w, "result", d)
+			i.render(w, r, "result", d)
 			return
 		}
 		id := newID()
 		st.offers[id] = preview
 		d.Data = map[string]any{"ID": id, "Preview": preview}
-		i.render(w, "offer", d)
+		i.render(w, r, "offer", d)
 	})
 
 	mux.HandleFunc("POST /receive", func(w http.ResponseWriter, r *http.Request) {
@@ -169,14 +233,15 @@ func (i *Instance) serve(port string) error {
 		}
 		i.steps.begin()
 		saved, err := i.AcceptOffer(preview)
-		d := pageData{Title: "クレデンシャルの受け取り", Steps: i.steps.take()}
+		lang, _ := requestLang(r)
+		d := pageData{Title: tr(lang, "クレデンシャルの受け取り", "Receive credential"), Steps: i.steps.take()}
 		if err != nil {
 			d.Error = err.Error()
 		} else {
-			d.Flash = fmt.Sprintf("%s を受け取りました", preview.Display.Name)
+			d.Flash = fmt.Sprintf(tr(lang, "%s を受け取りました", "Received %s"), preview.Display.NameIn(lang))
 			d.Data = map[string]any{"CredentialID": saved.Entry.Id}
 		}
-		i.render(w, "result", d)
+		i.render(w, r, "result", d)
 	})
 
 	mux.HandleFunc("GET /present", func(w http.ResponseWriter, r *http.Request) {
@@ -184,16 +249,17 @@ func (i *Instance) serve(port string) error {
 		defer st.mu.Unlock()
 		i.steps.begin()
 		prep, err := i.PreparePresentation(r.URL.Query().Get("request"))
-		d := pageData{Title: "提示リクエスト", Steps: i.steps.take()}
+		lang, _ := requestLang(r)
+		d := pageData{Title: tr(lang, "提示リクエスト", "Presentation request"), Steps: i.steps.take()}
 		if err != nil {
 			d.Error = err.Error()
-			i.render(w, "result", d)
+			i.render(w, r, "result", d)
 			return
 		}
 		id := newID()
 		st.requests[id] = prep
 		d.Data = map[string]any{"ID": id, "Prep": prep}
-		i.render(w, "request", d)
+		i.render(w, r, "request", d)
 	})
 
 	mux.HandleFunc("POST /present", func(w http.ResponseWriter, r *http.Request) {
@@ -209,20 +275,21 @@ func (i *Instance) serve(port string) error {
 			http.Redirect(w, r, "/", http.StatusSeeOther)
 			return
 		}
+		lang, _ := requestLang(r)
 		if r.FormValue("action") == "deny" {
-			i.info("提示を拒否", "%s", prep.ClientID)
-			http.Redirect(w, r, "/?flash="+url.QueryEscape("提示を拒否しました"), http.StatusSeeOther)
+			i.info(M("提示を拒否", "Presentation declined"), S("%s", prep.ClientID))
+			http.Redirect(w, r, "/?flash="+url.QueryEscape(tr(lang, "提示を拒否しました", "Presentation declined")), http.StatusSeeOther)
 			return
 		}
 		i.steps.begin()
 		redirect, err := i.SubmitPresentation(prep, r.Form["claim"])
-		d := pageData{Title: "提示結果", Steps: i.steps.take(), Data: map[string]any{"Redirect": redirect}}
+		d := pageData{Title: tr(lang, "提示結果", "Presentation result"), Steps: i.steps.take(), Data: map[string]any{"Redirect": redirect}}
 		if err != nil {
 			d.Error = err.Error()
 		} else {
-			d.Flash = fmt.Sprintf("%s に提示しました", prep.RP.CommonName)
+			d.Flash = fmt.Sprintf(tr(lang, "%s に提示しました", "Presented to %s"), prep.RP.CommonName)
 		}
-		i.render(w, "result", d)
+		i.render(w, r, "result", d)
 	})
 
 	mux.HandleFunc("GET /credentials/{id}", func(w http.ResponseWriter, r *http.Request) {
@@ -236,7 +303,8 @@ func (i *Instance) serve(port string) error {
 		for _, c := range creds {
 			if c.ID == r.PathValue("id") {
 				payload, _ := json.MarshalIndent(c.Payload, "", "  ")
-				i.render(w, "credential", pageData{Title: c.Display.Name, Data: map[string]any{"C": c, "Payload": string(payload)}})
+				lang, _ := requestLang(r)
+				i.render(w, r, "credential", pageData{Title: c.Display.NameIn(lang), Data: map[string]any{"C": c, "Payload": string(payload)}})
 				return
 			}
 		}
@@ -252,20 +320,23 @@ func (i *Instance) serve(port string) error {
 		if err != nil {
 			d.Error = err.Error()
 		} else {
-			d.Flash = "Wallet Attestation を取得しました"
+			lang, _ := requestLang(r)
+			d.Flash = tr(lang, "Wallet Attestation を取得しました", "Obtained a Wallet Attestation")
 		}
-		i.render(w, "result", d)
+		i.render(w, r, "result", d)
 	})
 
 	mux.HandleFunc("POST /reset", func(w http.ResponseWriter, r *http.Request) {
 		st.mu.Lock()
 		defer st.mu.Unlock()
 		_ = i.ResetCredentials()
-		http.Redirect(w, r, "/?flash="+url.QueryEscape("クレデンシャルを削除しました"), http.StatusSeeOther)
+		lang, _ := requestLang(r)
+		http.Redirect(w, r, "/?flash="+url.QueryEscape(tr(lang, "クレデンシャルを削除しました", "Deleted the credentials")), http.StatusSeeOther)
 	})
 
 	mux.HandleFunc("GET /activity", func(w http.ResponseWriter, r *http.Request) {
-		i.render(w, "activity", pageData{Title: "アクティビティ", Steps: i.steps.recent(100)})
+		lang, _ := requestLang(r)
+		i.render(w, r, "activity", pageData{Title: tr(lang, "アクティビティ", "Activity"), Steps: i.steps.recent(100)})
 	})
 
 	// Summary for the demo console
@@ -284,12 +355,12 @@ func (i *Instance) serve(port string) error {
 
 	addr := "localhost:" + port
 	fmt.Printf("Web wallet UI: http://%s\n", addr)
-	return http.ListenAndServe(addr, mux)
+	return http.ListenAndServe(addr, withLang(mux))
 }
 
 // ---- templates ---------------------------------------------------------------------------------
 
-const layoutTpl = `<!doctype html><html lang="ja"><head><meta charset="utf-8">
+const layoutTpl = `<!doctype html><html lang="{{lang}}"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{.Title}} - GakuNin Wallet</title>
 <style>
@@ -330,14 +401,15 @@ const layoutTpl = `<!doctype html><html lang="ja"><head><meta charset="utf-8">
  label.claim .v{color:var(--mut);font-size:12px;display:block}
  .tag{display:inline-block;font-size:11px;border-radius:6px;padding:1px 6px;background:#fff4d4;color:var(--warn);margin-left:4px}
  h2{font-size:15px;margin:4px 0 10px}
+ header .lang{font-size:12px;color:#cfe3ef} header .lang a{color:#cfe3ef;text-decoration:underline}
 </style></head><body><div class="phone">
-<header><a href="/">◀</a><span class="t">{{.Title}}</span><span class="mut" style="color:#cfe3ef">GakuNin Wallet</span></header>
+<header><a href="/">◀</a><span class="t">{{.Title}}</span><span class="lang">{{if eq .Lang "ja"}}<b>日本語</b> | <a href="{{.LangEn}}">English</a>{{else}}<a href="{{.LangJa}}">日本語</a> | <b>English</b>{{end}}</span></header>
 <main>
 {{if .Flash}}<div class="flash">{{.Flash}}</div>{{end}}
 {{if .Error}}<div class="error">✗ {{humanize .Error}}</div>{{end}}
 {{.Body}}
 </main>
-<nav><a href="/"><b>▤</b>クレデンシャル</a><a href="/scan"><b>⌗</b>読み取り</a><a href="/activity"><b>≡</b>アクティビティ</a>{{if .Console}}<a href="{{.Console}}" target="_blank"><b>◎</b>デモ</a>{{end}}</nav>
+<nav><a href="/"><b>▤</b>{{t "クレデンシャル" "Credentials"}}</a><a href="/scan"><b>⌗</b>{{t "読み取り" "Scan"}}</a><a href="/activity"><b>≡</b>{{t "アクティビティ" "Activity"}}</a>{{if .Console}}<a href="{{.Console}}" target="_blank"><b>◎</b>{{t "デモ" "Demo"}}</a>{{end}}</nav>
 </div></body></html>`
 
 const homeTpl = `
@@ -346,75 +418,76 @@ const homeTpl = `
  {{if .Inst.InstanceID}}
   <div class="mut">ID <code>{{short .Inst.InstanceID 60}}</code></div>
   <div class="mut" style="margin-top:4px">Wallet Attestation:
-   {{if .Expiry.IsZero}}<b style="color:var(--ng)">なし</b>{{else}}有効期限 {{time .Expiry}}{{end}}</div>
-  {{with .WIStatus}}<div class="mut" style="margin-top:4px">Wallet Instance の状態:
+   {{if .Expiry.IsZero}}<b style="color:var(--ng)">{{t "なし" "none"}}</b>{{else}}{{t "有効期限" "expires"}} {{time .Expiry}}{{end}}</div>
+  {{with .WIStatus}}<div class="mut" style="margin-top:4px">{{t "Wallet Instance の状態" "Wallet Instance status"}}:
    <span class="badge {{statusClass .}}" style="border:1px solid #d0d7de">{{statusName .}}</span> (Status List idx {{.Idx}})</div>{{end}}
- {{else}}<div class="mut">未登録です。Wallet Provider に登録して Wallet Attestation を取得してください。</div>{{end}}
- <form method="post" action="/attest"><button class="btn sec">{{if .Inst.InstanceID}}Wallet Attestation を再取得{{else}}Wallet Provider に登録{{end}}</button></form>
+ {{else}}<div class="mut">{{t "未登録です。Wallet Provider に登録して Wallet Attestation を取得してください。" "Not registered. Register with the Wallet Provider to obtain a Wallet Attestation."}}</div>{{end}}
+ <form method="post" action="/attest"><button class="btn sec">{{if .Inst.InstanceID}}{{t "Wallet Attestation を再取得" "Fetch a new Wallet Attestation"}}{{else}}{{t "Wallet Provider に登録" "Register with the Wallet Provider"}}{{end}}</button></form>
 </div>
 {{range .Data}}
  <a class="vc" href="/credentials/{{.ID}}" style="background:{{.Display.Background}};color:{{.Display.TextColor}}">
   <div style="display:flex;justify-content:space-between;align-items:start">
-   <div><div class="n">{{.Display.Name}}</div><div class="i">{{if .Display.IssuerName}}{{.Display.IssuerName}}{{else}}{{name .Issuer}}{{end}}</div></div>
+   <div><div class="n">{{dname .Display}}</div><div class="i">{{or (dissuer .Display) (name .Issuer)}}</div></div>
    <span class="badge {{statusClass .Status}}">{{statusName .Status}}</span>
   </div>
   <div class="h">{{index .Disclosures "name"}}</div>
   <div class="i">{{index .Disclosures "organization"}} {{index .Disclosures "department"}}</div>
-  <div class="i" style="margin-top:6px">受領 {{time .ReceivedAt}}</div>
+  <div class="i" style="margin-top:6px">{{t "受領" "Received"}} {{time .ReceivedAt}}</div>
  </a>
 {{else}}
- <div class="card mut">クレデンシャルはまだありません。学認Issuer の Credential Offer を読み取ってください。</div>
+ <div class="card mut">{{t "クレデンシャルはまだありません。学認Issuer の Credential Offer を読み取ってください。" "No credentials yet. Scan a Credential Offer from the GakuNin Issuer."}}</div>
 {{end}}
-<a class="btn" href="/scan">Offer / 提示リクエストを読み取る</a>
-{{if .Data}}<form method="post" action="/reset" onsubmit="return confirm('保存済みクレデンシャルを削除しますか?')"><button class="btn danger">クレデンシャルを全て削除</button></form>{{end}}`
+<a class="btn" href="/scan">{{t "Offer / 提示リクエストを読み取る" "Scan an offer / presentation request"}}</a>
+{{if .Data}}<form method="post" action="/reset" onsubmit="return confirm({{t "保存済みクレデンシャルを削除しますか?" "Delete the stored credentials?"}})"><button class="btn danger">{{t "クレデンシャルを全て削除" "Delete all credentials"}}</button></form>{{end}}`
 
 const scanTpl = `
 <div class="card">
- <h2>URI を貼り付け</h2>
- <p class="mut">Issuer の <code>openid-credential-offer://</code> または Verifier の <code>openid4vp:</code> を貼り付けてください。
- (Issuer / Verifier の画面の「Web Wallet で開く」ボタンからも直接開けます)</p>
+ <h2>{{t "URI を貼り付け" "Paste a URI"}}</h2>
+ <p class="mut">{{if eq lang "en"}}Paste an Issuer's <code>openid-credential-offer://</code> or a Verifier's <code>openid4vp:</code> URI
+ (or use the "Open in Web Wallet" button on the Issuer / Verifier pages).{{else}}Issuer の <code>openid-credential-offer://</code> または Verifier の <code>openid4vp:</code> を貼り付けてください。
+ (Issuer / Verifier の画面の「Web Wallet で開く」ボタンからも直接開けます){{end}}</p>
  <form method="get" action="/open"><textarea name="uri" placeholder="openid-credential-offer://?credential_offer=... / openid4vp:?client_id=..."></textarea>
- <button class="btn">開く</button></form>
+ <button class="btn">{{t "開く" "Open"}}</button></form>
 </div>`
 
-const stepsTpl = `{{define "steps"}}{{if .}}<div class="card"><h2>検証ステップ</h2><ul class="steps">{{range .}}<li class="{{if .Info}}info{{else if .OK}}ok{{else}}ng{{end}}">{{.Title}}{{if .Detail}}<span class="d">{{.Detail}}</span>{{end}}</li>{{end}}</ul></div>{{end}}{{end}}`
+const stepsTpl = `{{define "steps"}}{{if .}}<div class="card"><h2>{{t "検証ステップ" "Verification steps"}}</h2><ul class="steps">{{range .}}<li class="{{if .Info}}info{{else if .OK}}ok{{else}}ng{{end}}">{{msg .Title}}{{with msg .Detail}}<span class="d">{{.}}</span>{{end}}</li>{{end}}</ul></div>{{end}}{{end}}`
 
 const offerTpl = `
 {{$p := index .Data "Preview"}}
 <div class="vc" style="background:{{$p.Display.Background}};color:{{$p.Display.TextColor}}">
- <div class="n">{{$p.Display.Name}}</div><div class="i">{{$p.Display.IssuerName}}</div>
- <div class="i" style="margin-top:14px">発行者 {{name $p.Issuer}}</div>
+ <div class="n">{{dname $p.Display}}</div><div class="i">{{dissuer $p.Display}}</div>
+ <div class="i" style="margin-top:14px">{{t "発行者" "Issuer"}} {{name $p.Issuer}}</div>
 </div>
-<div class="card"><h2>発行者</h2>
+<div class="card"><h2>{{t "発行者" "Issuer"}}</h2>
  <table><tr><th>Issuer</th><td>{{name $p.Issuer}}</td></tr>
- <tr><th>信頼チェーン</th><td><span class="badge ok" style="background:#dafbe1">OpenID Federation</span><div class="mut" style="margin-top:4px">{{chain $p.IssuerChain}}</div></td></tr>
- <tr><th>種別</th><td>{{join $p.ConfigurationID ", "}}</td></tr></table>
+ <tr><th>{{t "信頼チェーン" "Trust chain"}}</th><td><span class="badge ok" style="background:#dafbe1">OpenID Federation</span><div class="mut" style="margin-top:4px">{{chain $p.IssuerChain}}</div></td></tr>
+ <tr><th>{{t "種別" "Type"}}</th><td>{{join $p.ConfigurationID ", "}}</td></tr></table>
 </div>
 {{template "steps" .Steps}}
 <form method="post" action="/receive"><input type="hidden" name="id" value="{{index .Data "ID"}}">
- <button class="btn">受け取る</button></form>
-<a class="btn sec" href="/">キャンセル</a>
-<p class="mut">受け取り時に Wallet Attestation と PoP を Issuer のトークンエンドポイントへ送ります。</p>`
+ <button class="btn">{{t "受け取る" "Accept"}}</button></form>
+<a class="btn sec" href="/">{{t "キャンセル" "Cancel"}}</a>
+<p class="mut">{{t "受け取り時に Wallet Attestation と PoP を Issuer のトークンエンドポイントへ送ります。" "On accepting, the Wallet Attestation and a PoP are sent to the Issuer's token endpoint."}}</p>`
 
 const requestTpl = `
 {{$p := index .Data "Prep"}}
-<div class="card"><h2>提示を求めている相手</h2>
+<div class="card"><h2>{{t "提示を求めている相手" "Requested by"}}</h2>
  <div style="font-size:18px;font-weight:700">{{$p.RP.CommonName}}</div>
  <div class="mut">{{$p.RP.Organization}} ({{$p.RP.OrganizationIdentifier}})</div>
  <table style="margin-top:8px">
   <tr><th>client_id</th><td><code>{{$p.ClientID}}</code></td></tr>
-  <tr><th>アクセス証明書</th><td><span class="badge ok" style="background:#dafbe1">ETSI TS 119 411-8</span><div class="mut">policy {{$p.RP.Policy}}<br>発行 {{$p.RP.AccessCA}}</div></td></tr>
-  <tr><th>Trust List</th><td><span class="badge ok" style="background:#dafbe1">ETSI TS 119 602</span><div class="mut">{{$p.LoTE.SchemeOperator}} (seq {{$p.LoTE.SequenceNumber}})<br>署名者: {{chain $p.LoTE.FederationPath}}</div></td></tr>
+  <tr><th>{{t "アクセス証明書" "Access certificate"}}</th><td><span class="badge ok" style="background:#dafbe1">ETSI TS 119 411-8</span><div class="mut">policy {{$p.RP.Policy}}<br>{{t "発行" "issued by"}} {{$p.RP.AccessCA}}</div></td></tr>
+  <tr><th>Trust List</th><td><span class="badge ok" style="background:#dafbe1">ETSI TS 119 602</span><div class="mut">{{$p.LoTE.SchemeOperator}} (seq {{$p.LoTE.SequenceNumber}})<br>{{t "署名者" "signer"}}: {{chain $p.LoTE.FederationPath}}</div></td></tr>
  </table>
 </div>
 <form method="post" action="/present"><input type="hidden" name="id" value="{{index .Data "ID"}}">
-<div class="card"><h2>開示する属性 ({{$p.Credential.Display.Name}})</h2>
+<div class="card"><h2>{{t "開示する属性" "Attributes to disclose"}} ({{dname $p.Credential.Display}})</h2>
  {{range $c := $p.ClaimOrder}}
   <label class="claim"><input type="checkbox" name="claim" value="{{$c}}" {{if contains $p.Requested $c}}checked data-required="1"{{end}}>
-   <span>{{$p.Credential.Label $c}}{{if contains $p.Requested $c}}<span class="tag">要求</span>{{end}}<span class="v">{{$p.Credential.Value $c}}</span></span></label>
+   <span>{{label $p.Credential.Display $c}}{{if contains $p.Requested $c}}<span class="tag">{{t "要求" "requested"}}</span>{{end}}<span class="v">{{$p.Credential.Value $c}}</span></span></label>
  {{end}}
- <div id="warn" class="error" style="display:none;margin-top:10px">Verifier が要求した属性を外しています。DCQL の要求を満たさないため Verifier に拒否される可能性があります。</div>
- <p class="mut">チェックした属性だけが選択的開示 (SD-JWT) で提示されます。Key Binding JWT で本人のウォレットからの提示であることを示します。</p>
+ <div id="warn" class="error" style="display:none;margin-top:10px">{{t "Verifier が要求した属性を外しています。DCQL の要求を満たさないため Verifier に拒否される可能性があります。" "You unchecked an attribute requested by the Verifier. The DCQL query is not satisfied, so the Verifier may reject the presentation."}}</div>
+ <p class="mut">{{t "チェックした属性だけが選択的開示 (SD-JWT) で提示されます。Key Binding JWT で本人のウォレットからの提示であることを示します。" "Only the checked attributes are disclosed (SD-JWT selective disclosure). A Key Binding JWT shows the presentation comes from the holder's wallet."}}</p>
 </div>
 <script>
 document.querySelectorAll('input[name=claim]').forEach((el) => el.addEventListener('change', () => {
@@ -423,31 +496,31 @@ document.querySelectorAll('input[name=claim]').forEach((el) => el.addEventListen
 }))
 </script>
 {{template "steps" .Steps}}
-<button class="btn" name="action" value="present">提示する</button>
-<button class="btn sec" name="action" value="deny">拒否する</button>
+<button class="btn" name="action" value="present">{{t "提示する" "Present"}}</button>
+<button class="btn sec" name="action" value="deny">{{t "拒否する" "Decline"}}</button>
 </form>`
 
 const resultTpl = `
 {{template "steps" .Steps}}
-{{with .Data}}{{with index . "CredentialID"}}<a class="btn" href="/credentials/{{.}}">受け取ったクレデンシャルを見る</a>{{end}}{{end}}
-{{with .Data}}{{with index . "Redirect"}}<a class="btn sec" href="{{.}}" target="_blank">Verifier の結果画面を開く</a>{{end}}{{end}}
-<a class="btn sec" href="/">ホームへ</a>`
+{{with .Data}}{{with index . "CredentialID"}}<a class="btn" href="/credentials/{{.}}">{{t "受け取ったクレデンシャルを見る" "View the received credential"}}</a>{{end}}{{end}}
+{{with .Data}}{{with index . "Redirect"}}<a class="btn sec" href="{{.}}" target="_blank">{{t "Verifier の結果画面を開く" "Open the Verifier's result page"}}</a>{{end}}{{end}}
+<a class="btn sec" href="/">{{t "ホームへ" "Home"}}</a>`
 
 const credentialTpl = `
 {{$c := index .Data "C"}}
 <div class="vc" style="background:{{$c.Display.Background}};color:{{$c.Display.TextColor}}">
- <div style="display:flex;justify-content:space-between"><div class="n">{{$c.Display.Name}}</div><span class="badge {{statusClass $c.Status}}">{{statusName $c.Status}}</span></div>
- <div class="i">{{$c.Display.IssuerName}}</div>
+ <div style="display:flex;justify-content:space-between"><div class="n">{{dname $c.Display}}</div><span class="badge {{statusClass $c.Status}}">{{statusName $c.Status}}</span></div>
+ <div class="i">{{dissuer $c.Display}}</div>
 </div>
-<div class="card"><h2>属性 (選択的開示が可能)</h2><table>
- {{range $k := $c.ClaimNames}}<tr><th>{{$c.Label $k}}</th><td>{{$c.Value $k}}</td></tr>{{end}}
+<div class="card"><h2>{{t "属性 (選択的開示が可能)" "Attributes (selectively disclosable)"}}</h2><table>
+ {{range $k := $c.ClaimNames}}<tr><th>{{label $c.Display $k}}</th><td>{{$c.Value $k}}</td></tr>{{end}}
 </table></div>
-<div class="card"><h2>状態 (Token Status List)</h2>
- {{with $c.Status}}<table><tr><th>状態</th><td><span class="badge {{statusClass $c.Status}}" style="border:1px solid #d0d7de">{{statusName $c.Status}}</span></td></tr>
+<div class="card"><h2>{{t "状態 (Token Status List)" "Status (Token Status List)"}}</h2>
+ {{with $c.Status}}<table><tr><th>{{t "状態" "Status"}}</th><td><span class="badge {{statusClass $c.Status}}" style="border:1px solid #d0d7de">{{statusName $c.Status}}</span></td></tr>
   <tr><th>idx</th><td>{{.Idx}}</td></tr><tr><th>Status List</th><td>{{humanize .URI}}</td></tr>
   <tr><th>Status Issuer</th><td class="mut">{{chain .ChainPath}}</td></tr></table>
- {{else}}<div class="error">{{$c.StatusErr}}</div>{{end}}
+ {{else}}<div class="error">{{humanize $c.StatusErr}}</div>{{end}}
 </div>
-<div class="card"><h2>Issuer 署名部 (SD-JWT payload)</h2><pre style="font-size:11px;white-space:pre-wrap;word-break:break-all">{{index .Data "Payload"}}</pre></div>`
+<div class="card"><h2>{{t "Issuer 署名部 (SD-JWT payload)" "Issuer-signed part (SD-JWT payload)"}}</h2><pre style="font-size:11px;white-space:pre-wrap;word-break:break-all">{{index .Data "Payload"}}</pre></div>`
 
-const activityTpl = `{{template "steps" .Steps}}{{if not .Steps}}<div class="card mut">まだアクティビティはありません。</div>{{end}}`
+const activityTpl = `{{template "steps" .Steps}}{{if not .Steps}}<div class="card mut">{{t "まだアクティビティはありません。" "No activity yet."}}</div>{{end}}`

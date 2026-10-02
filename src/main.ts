@@ -19,6 +19,7 @@ import {
 import { DATA_DIR, jwksOf, loadOrCreateKey, writeDataFile } from './common/keys.js'
 import type { FederationEntity, MetadataPolicy } from './federation/entity.js'
 import { clearEvents, emit } from './common/events.js'
+import { bi, withLang } from './common/i18n.js'
 import { resetWalletAttestationState } from './common/wallet-attestation.js'
 import { type TrustAnchorConfig, clearTrustChainCache } from './federation/resolver.js'
 import { createAuthority } from './services/authority.js'
@@ -40,7 +41,7 @@ let walletChild: ChildProcess | undefined
 
 /** Starts a server; exits with a hint when the port is already in use. */
 const listen = (app: Hono, port: number, onListening: () => void) => {
-  const server = serve({ fetch: app.fetch, port }, onListening)
+  const server = serve({ fetch: withLang(app.fetch), port }, onListening)
   servers.push(server)
   server.on('error', (err: NodeJS.ErrnoException) => {
     if (err.code === 'EADDRINUSE') {
@@ -68,7 +69,7 @@ const main = async () => {
   })
   const nii = createAuthority({
     entityId: ENTITY.nii,
-    organizationName: 'NII (学認)',
+    organizationName: 'NII (GakuNin)',
     federationKey: await fed('nii'),
     authorityHints: [ENTITY.trustAnchor],
   })
@@ -85,7 +86,7 @@ const main = async () => {
   ]
   writeDataFile('trust-anchor.json', anchors[0])
 
-  // ---- 学認 (NII) leaves ---------------------------------------------------------------------
+  // ---- GakuNin (NII) leaves ---------------------------------------------------------------------
   const idp = createIdp({
     entityId: ENTITY.idp,
     federationKey: await fed('idp'),
@@ -206,7 +207,7 @@ const main = async () => {
   // ---- Verifier (not a federation member; trusted by wallets via the Trust List) -----------
   const verifier = await createVerifier({
     baseUrl: ENTITY.verifier,
-    name: 'Prototype Verifier (学割サービス)',
+    name: 'Prototype Verifier (student discount service)',
     anchors,
     trustListEntityId: ENTITY.trustList,
     vct: CREDENTIAL_VCT,
@@ -217,15 +218,15 @@ const main = async () => {
     ['trustAnchor', 'Trust Anchor (eduGAIN)', ta.app],
     ['nii', 'Intermediate Authority (NII)', nii.app],
     ['i2', 'Intermediate Authority (I2)', i2.app],
-    ['idp', '機関IdP', idp.app],
-    ['attributeProvider', '属性Provider', ap.app],
-    ['issuer', '学認Issuer', issuer.app],
+    ['idp', 'Institution IdP', idp.app],
+    ['attributeProvider', 'Attribute Provider', ap.app],
+    ['issuer', 'GakuNin Issuer', issuer.app],
     ['walletProvider', 'Wallet Provider', walletProvider.app],
     ['trustList', 'Trust List', trustList.app],
     ['statusList', 'Status List', statusList.app],
     ['verifier', 'Verifier', verifier.app],
     ['incommonSp', 'InCommon SP', incommonSp.app],
-    ['gakuninSp', '学認SP (通常のSP)', gakuninSp.app],
+    ['gakuninSp', 'GakuNin SP (regular SP)', gakuninSp.app],
   ]
   await Promise.all(
     apps.map(
@@ -336,7 +337,12 @@ const resetAll = async () => {
     clearDataDir()
     clearEvents()
     await main()
-    emit('デモコンソール', 'info', '全てを初期状態に戻しました', '.data/ を削除し、新しい鍵で全エンティティを起動し直しました')
+    emit(
+      'デモコンソール',
+      'info',
+      bi('全てを初期状態に戻しました', 'Everything has been reset'),
+      bi('.data/ を削除し、新しい鍵で全エンティティを起動し直しました', 'Deleted .data/ and restarted every entity with new keys')
+    )
   } catch (e) {
     console.error('reset failed', e)
     process.exit(1)

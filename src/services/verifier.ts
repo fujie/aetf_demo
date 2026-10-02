@@ -1,4 +1,5 @@
 import { emit } from '../common/events.js'
+import { type Bi, bi, inBoth, pick, t } from '../common/i18n.js'
 import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -28,7 +29,7 @@ import { RP_REGISTRATION_TYP } from './trust-list.js'
 import { federationStatusListKeyResolver } from '../status-list/federation-key-resolver.js'
 import { StatusType, createStatusListClient } from '../status-list/token-status-list.js'
 
-type Check = { name: string; ok: boolean; detail: string }
+type Check = { name: string; ok: boolean; detail: Bi }
 type PresentationResult = {
   state: string
   transactionId: string
@@ -121,7 +122,7 @@ export const createVerifier = async (opts: {
       country: 'JP',
       contact_uri: `${baseUrl}/`,
       intended_use: {
-        purpose: '学割の適用確認 (在籍確認)',
+        purpose: 'Student discount eligibility (enrollment check)',
         credential: opts.vct,
         claims: REQUESTED_CLAIMS,
       },
@@ -154,7 +155,7 @@ export const createVerifier = async (opts: {
     )
     verifierFlow = newFlow
     console.log(`[verifier] registered ${clientId}; access certificate serial ${accessCertificate.serialNumber} (${accessCertificate.issuer})`)
-    emit('Verifier', 'ok', 'Registrar に登録しアクセス証明書 (WRPAC) を取得', `serial ${accessCertificate.serialNumber}`)
+    emit('Verifier', 'ok', bi('Registrar に登録しアクセス証明書 (WRPAC) を取得', 'Registered at the Registrar and obtained an access certificate (WRPAC)'), `serial ${accessCertificate.serialNumber}`)
   }
 
   const app = new Hono()
@@ -164,18 +165,18 @@ export const createVerifier = async (opts: {
       .reverse()
       .map(
         (r) => `<tr><td><a href="/requests/${encodeURIComponent(r.state)}">${esc(r.state.slice(0, 8))}</a></td><td>${esc(r.createdAt)}</td>
-        <td>${r.status === 'verified' ? '<span class="ok">検証成功</span>' : r.status === 'rejected' ? '<span class="ng">検証失敗</span>' : '待機中'}</td></tr>`
+        <td>${r.status === 'verified' ? `<span class="ok">${t('検証成功', 'verified')}</span>` : r.status === 'rejected' ? `<span class="ng">${t('検証失敗', 'rejected')}</span>` : t('待機中', 'pending')}</td></tr>`
       )
       .join('')
     return c.html(
       page(
         `Verifier - ${opts.name}`,
-        `<section><p>学認 学生証明書 (SD-JWT VC) の提示を要求します。</p>
-        <form method="post" action="/requests"><button>提示リクエストを作成</button></form>
+        `<section><p>${t('学認 学生証明書 (SD-JWT VC) の提示を要求します。', 'Requests a GakuNin student credential (SD-JWT VC).')}</p>
+        <form method="post" action="/requests"><button>${t('提示リクエストを作成', 'Create presentation request')}</button></form>
         <p class="mut">client_id: <code>${esc(clientId)}</code> / Registrar: <a href="${esc(opts.trustListEntityId)}/">${escMsg(opts.trustListEntityId)}</a></p>
-        <p class="mut">Access Certificate (WRPAC): ${accessCertificate ? `<code>${esc(accessCertificate.subject)}</code><br>issuer <code>${esc(accessCertificate.issuer)}</code> serial <code>${esc(accessCertificate.serialNumber)}</code>` : '<span class="ng">未登録</span>'}</p>
-        <form method="post" action="/register"><button>Registrar へ登録 / 再登録 (Access Certificate 再発行)</button></form></section>
-        <section><h3>履歴</h3><table><tr><th>state</th><th>作成</th><th>結果</th></tr>${rows}</table></section>`
+        <p class="mut">Access Certificate (WRPAC): ${accessCertificate ? `<code>${esc(accessCertificate.subject)}</code><br>issuer <code>${esc(accessCertificate.issuer)}</code> serial <code>${esc(accessCertificate.serialNumber)}</code>` : `<span class="ng">${t('未登録', 'not registered')}</span>`}</p>
+        <form method="post" action="/register"><button>${t('Registrar へ登録 / 再登録 (Access Certificate 再発行)', 'Register / re-register at the Registrar (re-issue the access certificate)')}</button></form></section>
+        <section><h3>${t('履歴', 'History')}</h3><table><tr><th>state</th><th>${t('作成', 'Created')}</th><th>${t('結果', 'Result')}</th></tr>${rows}</table></section>`
       )
     )
   })
@@ -221,7 +222,12 @@ export const createVerifier = async (opts: {
       const requestUri = `openid4vp:?${Object.entries(request)
         .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v && typeof v === 'object' ? JSON.stringify(v) : String(v))}`)
         .join('&')}`
-      emit('Verifier', 'info', `提示リクエストを作成 (${state.slice(0, 8)})`, `DCQL: ${REQUESTED_CLAIMS.join(', ')} / x5c にアクセス証明書`)
+      emit(
+      'Verifier',
+      'info',
+      bi(`提示リクエストを作成 (${state.slice(0, 8)})`, `Created a presentation request (${state.slice(0, 8)})`),
+      bi(`DCQL: ${REQUESTED_CLAIMS.join(', ')} / x5c にアクセス証明書`, `DCQL: ${REQUESTED_CLAIMS.join(', ')} / access certificate in x5c`)
+    )
       results.set(state, {
         state,
         transactionId,
@@ -245,19 +251,19 @@ export const createVerifier = async (opts: {
     if (!r) return c.json({ error: 'not_found' }, 404)
     if (c.req.header('Accept')?.includes('application/json')) return c.json(r)
     const checks = r.checks
-      .map((ch) => `<tr><td>${ch.ok ? '<span class="ok">OK</span>' : '<span class="ng">NG</span>'}</td><td>${esc(ch.name)}</td><td>${ch.detail}</td></tr>`)
+      .map((ch) => `<tr><td>${ch.ok ? '<span class="ok">OK</span>' : '<span class="ng">NG</span>'}</td><td>${esc(ch.name)}</td><td>${pick(ch.detail)}</td></tr>`)
       .join('')
     const body =
       r.status === 'pending'
-        ? `<section><p>Wallet でこのリクエストを読み取ってください。</p>
-           <p><a class="btn" href="${esc(`${WALLET_UI_URL}/present?request=${encodeURIComponent(r.requestUri)}`)}" target="_blank">Web Wallet で開く</a></p>
+        ? `<section><p>${t('Wallet でこのリクエストを読み取ってください。', 'Scan this request with the wallet.')}</p>
+           <p><a class="btn" href="${esc(`${WALLET_UI_URL}/present?request=${encodeURIComponent(r.requestUri)}`)}" target="_blank">${t('Web Wallet で開く', 'Open in Web Wallet')}</a></p>
            ${await qrSvg(r.requestUri)}
-           <p>Wallet Instance (CLI) の場合:</p><pre>./wallet-instance present '${esc(r.requestUri)}'</pre>
-           <p class="mut">このページは自動更新されます。</p></section>`
-        : `<section><h3>${r.status === 'verified' ? '<span class="ok">検証成功</span>' : '<span class="ng">検証失敗</span>'}</h3>
+           <p>${t('Wallet Instance (CLI) の場合', 'With the Wallet Instance CLI')}:</p><pre>./wallet-instance present '${esc(r.requestUri)}'</pre>
+           <p class="mut">${t('このページは自動更新されます。', 'This page refreshes automatically.')}</p></section>`
+        : `<section><h3>${r.status === 'verified' ? `<span class="ok">${t('検証成功', 'Verified')}</span>` : `<span class="ng">${t('検証失敗', 'Rejected')}</span>`}</h3>
            <table>${checks}</table></section>
-           ${r.disclosed ? `<section><h3>開示された属性</h3><pre>${esc(JSON.stringify(r.disclosed, null, 2))}</pre></section>` : ''}`
-    return c.html(page(`Verifier - 提示リクエスト ${r.state.slice(0, 8)}`, `${body}<section><a href="/">戻る</a></section>`, { refresh: r.status === 'pending' ? 3 : undefined }))
+           ${r.disclosed ? `<section><h3>${t('開示された属性', 'Disclosed attributes')}</h3><pre>${esc(JSON.stringify(r.disclosed, null, 2))}</pre></section>` : ''}`
+    return c.html(page(`Verifier - ${t('提示リクエスト', 'presentation request')} ${r.state.slice(0, 8)}`, `${body}<section><a href="/">${t('戻る', 'Back')}</a></section>`, { refresh: r.status === 'pending' ? 3 : undefined }))
   })
 
   app.get('/request.jwt/:id', async (c) => {
@@ -279,17 +285,23 @@ export const createVerifier = async (opts: {
       return c.json({ error: 'invalid_request', error_description: 'unknown or completed state' }, 400)
     }
     const checks: Check[] = []
+    const plainText = (html: string, arrow = '→') =>
+      html.replace(/<br>/g, ' / ').replace(/<[^>]+>/g, '').replace(/&rarr;/g, arrow).replace(/&amp;/g, '&')
     const report = () =>
       checks.forEach((ch) =>
-        emit('Verifier', ch.ok ? 'ok' : 'error', `${ch.name}: ${ch.ok ? 'OK' : 'NG'}`, ch.detail.replace(/<br>/g, ' / ').replace(/<[^>]+>/g, '').replace(/&rarr;/g, '→'))
+        emit('Verifier', ch.ok ? 'ok' : 'error', `${ch.name}: ${ch.ok ? 'OK' : 'NG'}`, {
+          ja: plainText(ch.detail.ja),
+          en: plainText(ch.detail.en),
+        })
       )
     const fail = (status: 400 | 401 = 400) => {
       result.status = 'rejected'
       result.checks = checks
       report()
-      emit('Verifier', 'error', `提示を拒否 (${state.slice(0, 8)})`)
+      emit('Verifier', 'error', bi(`提示を拒否 (${state.slice(0, 8)})`, `Presentation rejected (${state.slice(0, 8)})`))
       const last = checks[checks.length - 1]
-      const plain = (last?.detail ?? '').replace(/<br>/g, ' / ').replace(/<[^>]+>/g, '').replace(/&rarr;/g, '->').replace(/\s+/g, ' ')
+      // the API error is in English
+      const plain = plainText(last?.detail.en ?? '', '->').replace(/\s+/g, ' ')
       return c.json({ error: 'access_denied', error_description: `${last?.name}: ${plain}` }, status)
     }
 
@@ -304,10 +316,13 @@ export const createVerifier = async (opts: {
       checks.push({
         name: 'Wallet Attestation',
         ok: true,
-        detail: `${esc(att.walletName ?? '')} <code>${esc(att.clientId)}</code><br>Wallet Provider: ${trustChainHtml(att.trustChainPath)}<br>Wallet Instance status: ${esc(att.status.statusName)} (Status List idx ${att.status.idx})`,
+        detail: inBoth(
+          () =>
+            `${esc(att.walletName ?? '')} <code>${esc(att.clientId)}</code><br>Wallet Provider: ${trustChainHtml(att.trustChainPath)}<br>Wallet Instance status: ${esc(att.status.statusName)} (Status List idx ${att.status.idx})`
+        ),
       })
     } catch (e) {
-      checks.push({ name: 'Wallet Attestation', ok: false, detail: escMsg((e as Error).message) })
+      checks.push({ name: 'Wallet Attestation', ok: false, detail: inBoth(() => escMsg((e as Error).message)) })
       return fail(401)
     }
 
@@ -320,9 +335,9 @@ export const createVerifier = async (opts: {
       await flow().verifyPresentations(response, result.transactionId, { isKbJwt: true })
       const first = Object.values(vpToken)[0]
       presentation = Array.isArray(first) ? first[0] : String(first)
-      checks.push({ name: 'VP / KB-JWT (vcknots)', ok: true, detail: 'SD-JWT VC と Key Binding JWT を検証しました' })
+      checks.push({ name: 'VP / KB-JWT (vcknots)', ok: true, detail: bi('SD-JWT VC と Key Binding JWT を検証しました', 'Verified the SD-JWT VC and the Key Binding JWT') })
     } catch (e) {
-      checks.push({ name: 'VP / KB-JWT (vcknots)', ok: false, detail: esc(toErrorResponse(e).body.error_description) })
+      checks.push({ name: 'VP / KB-JWT (vcknots)', ok: false, detail: inBoth(() => escMsg(toErrorResponse(e).body.error_description)) })
       return fail()
     }
     const sdJwt = decodeSdJwt(presentation)
@@ -337,9 +352,9 @@ export const createVerifier = async (opts: {
       )
       await verifyWithJwks(sdJwt.issuerJwt, metadata.jwks, { typ: 'dc+sd-jwt' })
       if (sdJwt.payload.vct !== opts.vct) throw new Error(`unexpected vct ${String(sdJwt.payload.vct)}`)
-      checks.push({ name: 'Issuer (OpenID Federation)', ok: true, detail: trustChainHtml(chain.path) })
+      checks.push({ name: 'Issuer (OpenID Federation)', ok: true, detail: inBoth(() => trustChainHtml(chain.path)) })
     } catch (e) {
-      checks.push({ name: 'Issuer (OpenID Federation)', ok: false, detail: escMsg((e as Error).message) })
+      checks.push({ name: 'Issuer (OpenID Federation)', ok: false, detail: inBoth(() => escMsg((e as Error).message)) })
       return fail()
     }
 
@@ -348,22 +363,24 @@ export const createVerifier = async (opts: {
     try {
       const st = await statusListClient.check(sdJwt.payload as Record<string, unknown>)
       const chain = st.statusIssuer ? await resolveTrustChain(st.statusIssuer, opts.anchors) : undefined
-      const detail = `idx=${st.idx} status=0x${st.status.toString(16).padStart(2, '0')} (${st.statusName})
+      const detail = inBoth(
+        () => `idx=${st.idx} status=0x${st.status.toString(16).padStart(2, '0')} (${st.statusName})
         <br>${escMsg(st.uri)} iat=${new Date(st.token.iat * 1000).toISOString()} ttl=${st.token.ttl ?? '-'}s${st.fromCache ? ' (cached)' : ''}
         <br>Status Issuer: ${chain ? trustChainHtml(chain.path) : '-'}`
+      )
       if (st.status !== StatusType.VALID) {
         checks.push({ name: 'Status List', ok: false, detail })
         return fail()
       }
       checks.push({ name: 'Status List', ok: true, detail })
     } catch (e) {
-      checks.push({ name: 'Status List', ok: false, detail: escMsg((e as Error).message) })
+      checks.push({ name: 'Status List', ok: false, detail: inBoth(() => escMsg((e as Error).message)) })
       return fail()
     }
 
     result.status = 'verified'
     report()
-    emit('Verifier', 'ok', `提示を受理 (${state.slice(0, 8)})`, Object.entries(sdJwt.disclosed).map(([k, v]) => `${k}=${String(v)}`).join(', '))
+    emit('Verifier', 'ok', bi(`提示を受理 (${state.slice(0, 8)})`, `Presentation accepted (${state.slice(0, 8)})`), Object.entries(sdJwt.disclosed).map(([k, v]) => `${k}=${String(v)}`).join(', '))
     result.checks = checks
     result.disclosed = sdJwt.disclosed
     console.log(`[verifier] presentation ${state} verified:`, sdJwt.disclosed)

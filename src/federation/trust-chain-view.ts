@@ -1,5 +1,6 @@
 import * as jose from 'jose'
 import { esc, escMsg } from '../common/html.js'
+import { t } from '../common/i18n.js'
 import { humanize } from '../common/names.js'
 import type { FederationMetadata, MetadataPolicy } from './entity.js'
 import {
@@ -50,6 +51,9 @@ const decode = (jwt?: string) => {
   }
 }
 
+/** Approximate rendered width: full-width (CJK) characters count as `full` px, others ~0.58 of it. */
+const textWidth = (text: string, full: number) =>
+  [...text].reduce((w, ch) => w + (/[\u3000-\u9fff\uff00-\uffef]/.test(ch) ? full : full * 0.58), 0)
 const shortKid = (kid?: string) => (kid ? (kid.length > 12 ? `${kid.slice(0, 10)}…` : kid) : '-')
 const kidsOf = (claims?: Claims) => (claims?.jwks?.keys ?? []).map((k) => shortKid(k.kid)).join(', ') || '-'
 const trunc = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s)
@@ -163,7 +167,7 @@ const diagramSvg = (model: Model, leafId: string, path: Set<string>, label: (id:
   const badge = (x: number, y: number, text: string, st: 'ok' | 'ng' | 'na', ev?: TraceEvent) => {
     const n = ev && steps.get(ev)
     const pad = n ? 22 : 10
-    return `<g><rect x="${x}" y="${y}" width="${text.length * 11 + 10 + pad}" height="20" rx="10" fill="${COLORS[st]}"/>${
+    return `<g><rect x="${x}" y="${y}" width="${textWidth(text, 11.5) + 10 + pad}" height="20" rx="10" fill="${COLORS[st]}"/>${
       n ? `<circle cx="${x + 10}" cy="${y + 10}" r="10" class="sn" stroke="#fff" stroke-width="1.5"/><text x="${x + 10}" y="${y + 14}" class="snt">${n}</text>` : ''
     }<text x="${x + pad}" y="${y + 14}" class="bd">${esc(text)}</text></g>`
   }
@@ -183,7 +187,7 @@ const diagramSvg = (model: Model, leafId: string, path: Set<string>, label: (id:
   ) => {
     const mx = (x1 + x2) / 2
     const my = (y1 + y2) / 2
-    const w = text.length * 12 + 12
+    const w = textWidth(text, 12) + 12
     return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${COLORS[st]}" stroke-width="2.5" ${dashed ? 'stroke-dasharray="7 5"' : ''} marker-end="url(#tcv-${st})"/>
       <rect x="${mx - w / 2}" y="${my - 11}" width="${w}" height="20" rx="4" fill="#fff" stroke="${COLORS[st]}"/>
       <text x="${mx}" y="${my + 4}" class="al" fill="${COLORS[st]}">${esc(text)}</text>${stepNo(ev, mx - w / 2 - 14, my)}`
@@ -196,7 +200,7 @@ const diagramSvg = (model: Model, leafId: string, path: Set<string>, label: (id:
     const isTa = !!node.taVerify
     const isLeaf = node.id === leafId
     const onPath = path.has(node.id)
-    const role = isTa ? 'Trust Anchor' : isLeaf ? 'Leaf Entity (解決対象)' : 'Intermediate Entity'
+    const role = isTa ? 'Trust Anchor' : isLeaf ? t('Leaf Entity (解決対象)', 'Leaf Entity (target)') : 'Intermediate Entity'
     const lx = p.x - LABEL_W - 40
     parts.push(`<g><rect x="${lx}" y="${p.y + 30}" width="${LABEL_W}" height="96" rx="10" class="ent ${onPath ? 'onp' : ''} ${isTa ? 'ta' : ''}"/>
       <text x="${lx + LABEL_W / 2}" y="${p.y + 58}" class="er">${esc(role)}</text>
@@ -211,26 +215,26 @@ const diagramSvg = (model: Model, leafId: string, path: Set<string>, label: (id:
           [
             node.claims.authority_hints?.length
               ? `authority_hints: ${trunc(node.claims.authority_hints.map(label).join(', '), 24)}`
-              : 'authority_hints: なし (最上位)',
+              : t('authority_hints: なし (最上位)', 'authority_hints: none (top)'),
           ],
           [`metadata: ${trunc(Object.keys(node.claims.metadata ?? {}).join(', ') || '-', 30)}`],
         ]
       : node.fetch && !node.fetch.ok
-        ? [['取得失敗', 'tng'], [trunc(humanize(node.fetch.error ?? ''), 40), 'tng']]
-        : [['(未取得)', 'tmut']]
+        ? [[t('取得失敗', 'fetch failed'), 'tng'], [trunc(humanize(node.fetch.error ?? ''), 40), 'tng']]
+        : [[t('(未取得)', '(not fetched)'), 'tmut']]
     parts.push(`<g><rect x="${p.x}" y="${p.y}" width="${EC_W}" height="${EC_H}" rx="8" class="card ${onPath ? 'onp' : ''}" ${st === 'ng' ? `style="stroke:${COLORS.ng};stroke-width:2.5"` : ''}/>
       <path d="M${p.x} ${p.y + 8}a8 8 0 0 1 8 -8h${EC_W - 16}a8 8 0 0 1 8 8v20h-${EC_W}z" class="ech"/>
       <text x="${p.x + 10}" y="${p.y + 19}" class="ht">Entity Configuration</text>
       ${lines(p.x + 10, p.y + 46, rows)}
-      ${node.selfVerify ? badge(p.x + 10, p.y + EC_H - 28, `自己署名 ${node.selfVerify.ok ? '✓' : '✗'}`, status(node.selfVerify), node.selfVerify) : ''}
-      ${node.ssVerify ? badge(p.x + 135, p.y + EC_H - 28, `上位SSの鍵 ${node.ssVerify.ok ? '✓' : '✗'}`, status(node.ssVerify)) : ''}
-      ${node.taVerify ? badge(p.x + 135, p.y + EC_H - 28, `TA鍵 ${node.taVerify.ok ? '✓' : '✗'}`, status(node.taVerify)) : ''}
+      ${node.selfVerify ? badge(p.x + 10, p.y + EC_H - 28, `${t('自己署名', 'self-signed')} ${node.selfVerify.ok ? '✓' : '✗'}`, status(node.selfVerify), node.selfVerify) : ''}
+      ${node.ssVerify ? badge(p.x + 135, p.y + EC_H - 28, `${t('上位SSの鍵', 'superior SS key')} ${node.ssVerify.ok ? '✓' : '✗'}`, status(node.ssVerify)) : ''}
+      ${node.taVerify ? badge(p.x + 135, p.y + EC_H - 28, `${t('TA鍵', 'TA key')} ${node.taVerify.ok ? '✓' : '✗'}`, status(node.taVerify)) : ''}
       ${stepNo(node.fetch, p.x + EC_W - 4, p.y + 4)}</g>`)
     if (isTa) {
       const ky = p.y + 134
       parts.push(`<g><rect x="${lx}" y="${ky}" width="${LABEL_W}" height="30" rx="6" class="key"/>
-        <text x="${lx + LABEL_W / 2}" y="${ky + 20}" class="kt">🔑 事前設定の TA 公開鍵</text></g>`)
-      parts.push(arrow(lx + LABEL_W, ky + 15, p.x - 2, ky + 15, status(node.taVerify), '検証', node.taVerify))
+        <text x="${lx + LABEL_W / 2}" y="${ky + 20}" class="kt">🔑 ${t('事前設定の TA 公開鍵', 'pre-set TA key')}</text></g>`)
+      parts.push(arrow(lx + LABEL_W, ky + 15, p.x - 2, ky + 15, status(node.taVerify), t('検証', 'verify'), node.taVerify))
     }
     // authority_hints arrows (subordinate EC -> superior)
     for (const h of hints.get(node.id) ?? []) {
@@ -253,24 +257,24 @@ const diagramSvg = (model: Model, leafId: string, path: Set<string>, label: (id:
       ? [
           [`iss: ${trunc(label(s.issuer), 26)}`],
           [`sub: ${trunc(label(s.entity), 26)}`],
-          [`jwks (sub の鍵): kid ${kidsOf(s.claims)}`],
+          [`jwks (${t('sub の鍵', 'sub keys')}): kid ${kidsOf(s.claims)}`],
           [
-            `metadata_policy: ${trunc(Object.keys(s.claims.metadata_policy ?? {}).join(', ') || 'なし', 24)}`,
+            `metadata_policy: ${trunc(Object.keys(s.claims.metadata_policy ?? {}).join(', ') || t('なし', 'none'), 24)}`,
           ],
         ]
-      : [['取得失敗', 'tng'], [trunc(humanize(s.fetch?.error ?? ''), 42), 'tng']]
+      : [[t('取得失敗', 'fetch failed'), 'tng'], [trunc(humanize(s.fetch?.error ?? ''), 42), 'tng']]
     parts.push(`<g><rect x="${p.x}" y="${p.y}" width="${SS_W}" height="${EC_H}" rx="8" class="card ${path.has(s.issuer) && path.has(s.entity) ? 'onp' : ''}" ${st === 'ng' ? `style="stroke:${COLORS.ng};stroke-width:2.5"` : ''}/>
       <path d="M${p.x} ${p.y + 8}a8 8 0 0 1 8 -8h${SS_W - 16}a8 8 0 0 1 8 8v20h-${SS_W}z" class="ssh"/>
       <text x="${p.x + 10}" y="${p.y + 19}" class="ht">Subordinate Statement</text>
       ${lines(p.x + 10, p.y + 46, rows)}
-      ${s.verify ? badge(p.x + 10, p.y + EC_H - 28, `上位ECの鍵で署名検証 ${s.verify.ok ? '✓' : '✗'}`, status(s.verify)) : ''}
+      ${s.verify ? badge(p.x + 10, p.y + EC_H - 28, `${t('上位ECの鍵で署名検証', 'verified with superior EC key')} ${s.verify.ok ? '✓' : '✗'}`, status(s.verify)) : ''}
       ${stepNo(s.fetch, p.x + SS_W - 4, p.y + 4)}</g>`)
     // issuer EC jwks -> verifies SS
     parts.push(arrow(sup.x + EC_W + 2, sup.y + 84, p.x - 2, p.y + 84, status(s.verify), 'jwks', s.verify))
     // SS jwks -> verifies subordinate EC
     if (sub) {
       const ev = ecs.get(s.entity)?.ssVerify
-      parts.push(arrow(p.x + 60, p.y + EC_H + 2, sub.x + EC_W - 40, sub.y - 2, status(ev), 'jwks で EC を検証', ev))
+      parts.push(arrow(p.x + 60, p.y + EC_H + 2, sub.x + EC_W - 40, sub.y - 2, status(ev), t('jwks で EC を検証', 'jwks verifies EC'), ev))
     }
   }
 
@@ -283,15 +287,15 @@ const diagramSvg = (model: Model, leafId: string, path: Set<string>, label: (id:
     const ok = final.type === 'metadata'
     const rows: [string, string?][] = ok
       ? [
-          [`metadata_policy: ${trunc(final.policies.map((p) => label(p.issuer)).join(' → ') || 'なし', 26)}`],
-          ['(TA から順にマージして Leaf に適用)'],
+          [`metadata_policy: ${trunc(final.policies.map((p) => label(p.issuer)).join(' → ') || t('なし', 'none'), 26)}`],
+          [t('(TA から順にマージして Leaf に適用)', '(merged from the TA down, applied to the leaf)')],
           [`entity types: ${trunc(Object.keys(final.resolved).join(', '), 28)}`],
         ]
       : [[trunc(humanize(final.message), 44), 'tng'], [trunc(humanize(final.message).slice(43), 44), 'tng']]
     parts.push(`<g><rect x="${x}" y="${y}" width="${SS_W}" height="${EC_H - 40}" rx="8" class="card" style="stroke:${ok ? COLORS.ok : COLORS.ng};stroke-width:2;stroke-dasharray:6 4"/>
-      <text x="${x + 10}" y="${y + 24}" class="ft" fill="${ok ? COLORS.ok : COLORS.ng}">${ok ? 'Resolved Metadata' : 'Trust Chain 構築失敗'}</text>
+      <text x="${x + 10}" y="${y + 24}" class="ft" fill="${ok ? COLORS.ok : COLORS.ng}">${ok ? 'Resolved Metadata' : t('Trust Chain 構築失敗', 'Trust Chain failed')}</text>
       ${lines(x + 10, y + 50, rows)}${stepNo(final, x + SS_W - 4, y + 4)}</g>`)
-    parts.push(arrow(leafPos.x + EC_W + 2, y + 64, x - 2, y + 64, ok ? 'ok' : 'ng', ok ? '適用' : '失敗', undefined))
+    parts.push(arrow(leafPos.x + EC_W + 2, y + 64, x - 2, y + 64, ok ? 'ok' : 'ng', ok ? t('適用', 'apply') : t('失敗', 'failed'), undefined))
   }
 
   return `<svg class="tcv-svg" viewBox="0 0 ${width} ${height}" style="max-width:${width}px" xmlns="http://www.w3.org/2000/svg">
@@ -315,18 +319,18 @@ const chainStrip = (result: ResolvedTrustChain, label: (id: string) => string) =
     const card = `<div class="cc ${cls}"><div class="cch"><b>[${i}]</b> ${esc(kind)}</div>
       <div class="ccb"><div><span>iss</span> ${esc(label(String(payload?.iss)))}</div>
       <div><span>sub</span> ${esc(label(String(payload?.sub)))}</div>
-      <div><span>署名 kid</span> <code>${esc(shortKid(header?.kid))}</code></div>
+      <div><span>${t('署名 kid', 'signing kid')}</span> <code>${esc(shortKid(header?.kid))}</code></div>
       <div><span>jwks</span> <code>${esc(kidsOf(payload))}</code></div>
       <div><span>exp</span> ${esc(exp)}</div>
-      <details><summary>デコード</summary><pre>${esc(JSON.stringify({ header, payload }, null, 2))}</pre></details></div></div>`
+      <details><summary>${t('デコード', 'Decoded')}</summary><pre>${esc(JSON.stringify({ header, payload }, null, 2))}</pre></details></div></div>`
     const next =
       i < n - 1
-        ? `<div class="ca"><div>→</div><div class="cal">[${i}] の署名鍵 <code>${esc(shortKid(header?.kid))}</code><br>∈ [${i + 1}].jwks</div></div>`
-        : `<div class="ca"><div>←</div><div class="cal">[${i}] の署名鍵<br>∈ 事前設定の TA 鍵</div></div>`
+        ? `<div class="ca"><div>→</div><div class="cal">${t(`[${i}] の署名鍵`, `signing key of [${i}]`)} <code>${esc(shortKid(header?.kid))}</code><br>∈ [${i + 1}].jwks</div></div>`
+        : `<div class="ca"><div>←</div><div class="cal">${t(`[${i}] の署名鍵<br>∈ 事前設定の TA 鍵`, `signing key of [${i}]<br>∈ pre-configured TA key`)}</div></div>`
     return card + next
   })
   return `<div class="strip">${cards.join('')}</div>
-    <p class="mut">Trust Chain の有効期限 = 全ステートメントの exp の最小値: ${esc(new Date(result.exp * 1000).toLocaleString('ja-JP'))}</p>`
+    <p class="mut">${t('Trust Chain の有効期限 = 全ステートメントの exp の最小値', 'Trust Chain expiry = the smallest exp of all statements')}: ${esc(new Date(result.exp * 1000).toLocaleString(t('ja-JP', 'en-GB')))}</p>`
 }
 
 // ---- (C) steps -------------------------------------------------------------------------------
@@ -341,28 +345,47 @@ const stepList = (model: Model, rawLabel: (id?: string) => string) => {
         st = e.ok ? 'ok' : 'ng'
         text =
           e.kind === 'ec'
-            ? `${label(e.entity)} の Entity Configuration を取得 <code>GET ${escMsg(e.url)}</code>`
-            : `${label(e.issuer as string)} から ${label(e.entity)} についての Subordinate Statement を取得 <code>GET ${escMsg(e.url)}</code>`
+            ? t(`${label(e.entity)} の Entity Configuration を取得`, `Fetch the Entity Configuration of ${label(e.entity)}`) +
+              ` <code>GET ${escMsg(e.url)}</code>`
+            : t(
+                `${label(e.issuer as string)} から ${label(e.entity)} についての Subordinate Statement を取得`,
+                `Fetch the Subordinate Statement about ${label(e.entity)} from ${label(e.issuer as string)}`
+              ) + ` <code>GET ${escMsg(e.url)}</code>`
         break
       case 'authority_hints':
-        text = `${label(e.entity)} の authority_hints を確認 → ${e.hints.length ? e.hints.map((h) => label(h)).join(', ') : '(なし)'}`
+        text = `${t(`${label(e.entity)} の authority_hints を確認`, `authority_hints of ${label(e.entity)}`)} → ${e.hints.length ? e.hints.map((h) => label(h)).join(', ') : t('(なし)', '(none)')}`
         break
       case 'verify':
         st = e.ok ? 'ok' : 'ng'
         text = {
-          self: `EC(${label(e.entity)}) の自己署名を EC 内の jwks で検証 (kid ${esc(shortKid(e.kid))})`,
-          superior_ec: `SS(${label(e.issuer as string)} → ${label(e.entity)}) の署名を ${label(e.issuer as string)} の EC の jwks で検証 (kid ${esc(shortKid(e.kid))})`,
-          subordinate_statement: `EC(${label(e.entity)}) の署名鍵が SS(${label(e.keySourceEntity as string)} → ${label(e.entity)}) の jwks に含まれることを検証 (kid ${esc(shortKid(e.kid))})`,
-          trust_anchor_config: `Trust Anchor ${label(e.entity)} の EC を事前設定された TA 公開鍵で検証 (kid ${esc(shortKid(e.kid))})`,
+          self: t(
+            `EC(${label(e.entity)}) の自己署名を EC 内の jwks で検証 (kid ${esc(shortKid(e.kid))})`,
+            `Verify the self-signature of EC(${label(e.entity)}) with the jwks in the EC (kid ${esc(shortKid(e.kid))})`
+          ),
+          superior_ec: t(
+            `SS(${label(e.issuer as string)} → ${label(e.entity)}) の署名を ${label(e.issuer as string)} の EC の jwks で検証 (kid ${esc(shortKid(e.kid))})`,
+            `Verify the signature of SS(${label(e.issuer as string)} → ${label(e.entity)}) with the jwks in the EC of ${label(e.issuer as string)} (kid ${esc(shortKid(e.kid))})`
+          ),
+          subordinate_statement: t(
+            `EC(${label(e.entity)}) の署名鍵が SS(${label(e.keySourceEntity as string)} → ${label(e.entity)}) の jwks に含まれることを検証 (kid ${esc(shortKid(e.kid))})`,
+            `Verify that the signing key of EC(${label(e.entity)}) is in the jwks of SS(${label(e.keySourceEntity as string)} → ${label(e.entity)}) (kid ${esc(shortKid(e.kid))})`
+          ),
+          trust_anchor_config: t(
+            `Trust Anchor ${label(e.entity)} の EC を事前設定された TA 公開鍵で検証 (kid ${esc(shortKid(e.kid))})`,
+            `Verify the EC of Trust Anchor ${label(e.entity)} with the pre-configured TA public key (kid ${esc(shortKid(e.kid))})`
+          ),
         }[e.keySource]
         break
       case 'metadata':
         st = 'ok'
-        text = `metadata_policy (${e.policies.map((p) => label(p.issuer)).join(' → ') || 'なし'}) をマージして Leaf のメタデータに適用 → Resolved Metadata`
+        text = t(
+          `metadata_policy (${e.policies.map((p) => label(p.issuer)).join(' → ') || 'なし'}) をマージして Leaf のメタデータに適用 → Resolved Metadata`,
+          `Merge metadata_policy (${e.policies.map((p) => label(p.issuer)).join(' → ') || 'none'}) and apply it to the leaf metadata → Resolved Metadata`
+        )
         break
       case 'error':
         st = 'ng'
-        text = `Trust Chain を構築できませんでした: ${escMsg(e.message)}`
+        text = `${t('Trust Chain を構築できませんでした', 'Could not build a Trust Chain')}: ${escMsg(e.message)}`
         break
     }
     const err = (e.type === 'fetch' || e.type === 'verify') && e.error ? `<div class="se">${escMsg(e.error)}</div>` : ''
@@ -391,13 +414,13 @@ const metadataTable = (m: MetadataStage, label: (id: string) => string) => {
         .join('')
       if (before === undefined && resT[p] === undefined) continue
       const changed = JSON.stringify(before) !== JSON.stringify(resT[p])
-      const note = p in supT ? '<span class="by">上位SSの metadata で上書き</span><br>' : ''
+      const note = p in supT ? `<span class="by">${t('上位SSの metadata で上書き', 'overridden by superior SS metadata')}</span><br>` : ''
       rows.push(`<tr class="${changed ? 'chg' : ''}"><td><code>${esc(p)}</code></td>
         <td title="${esc(JSON.stringify(before))}">${note}${esc(show(before))}</td><td>${ops}</td>
-        <td title="${esc(JSON.stringify(resT[p]))}">${p in resT ? esc(show(resT[p])) : '<span class="by">(削除)</span>'}${changed ? ' <b class="cm">変更</b>' : ''}</td></tr>`)
+        <td title="${esc(JSON.stringify(resT[p]))}">${p in resT ? esc(show(resT[p])) : `<span class="by">${t('(削除)', '(removed)')}</span>`}${changed ? ` <b class="cm">${t('変更', 'changed')}</b>` : ''}</td></tr>`)
     }
   }
-  return `<table class="mt"><thead><tr><th>パラメータ</th><th>Leaf の EC (適用前)</th><th>metadata_policy (TA → 下位の順にマージ)</th><th>Resolved Metadata</th></tr></thead><tbody>${rows.join('')}</tbody></table>`
+  return `<table class="mt"><thead><tr><th>${t('パラメータ', 'Parameter')}</th><th>${t('Leaf の EC (適用前)', 'Leaf EC (before)')}</th><th>${t('metadata_policy (TA → 下位の順にマージ)', 'metadata_policy (merged TA → down)')}</th><th>Resolved Metadata</th></tr></thead><tbody>${rows.join('')}</tbody></table>`
 }
 
 export const TRUST_CHAIN_VIEW_CSS = `
@@ -438,16 +461,18 @@ export const trustChainVisualHtml = (
   const path = new Set(result?.path ?? [])
   const metadata = trace.find((e): e is MetadataStage => e.type === 'metadata')
   const head = result
-    ? `<h3 class="ok">✓ Trust Chain 検証成功</h3><p>${result.path.map((p) => `<code>${esc(label(p))}</code>`).join(' → ')} (Trust Anchor: ${esc(label(result.trustAnchor))})</p>`
-    : `<h3 class="ng">✗ Trust Chain 検証失敗</h3><pre>${escMsg(error ?? '')}</pre>`
+    ? `<h3 class="ok">✓ ${t('Trust Chain 検証成功', 'Trust Chain valid')}</h3><p>${result.path.map((p) => `<code>${esc(label(p))}</code>`).join(' → ')} (Trust Anchor: ${esc(label(result.trustAnchor))})</p>`
+    : `<h3 class="ng">✗ ${t('Trust Chain 検証失敗', 'Trust Chain invalid')}</h3><pre>${escMsg(error ?? '')}</pre>`
   return `<section>${head}
-    <h4>① フェデレーション上の解決経路</h4>
-    <p class="mut">Leaf から authority_hints をたどって上位エンティティの Entity Configuration を取得し、上位の fetch エンドポイントから Subordinate Statement を取得します。
-    各ステートメントは「1 つ上の発行者の jwks」で署名検証され、最上位は事前設定された Trust Anchor の公開鍵で検証されます。番号は下の解決ステップに対応します。</p>
+    <h4>① ${t('フェデレーション上の解決経路', 'Resolution path in the federation')}</h4>
+    <p class="mut">${t(
+      'Leaf から authority_hints をたどって上位エンティティの Entity Configuration を取得し、上位の fetch エンドポイントから Subordinate Statement を取得します。各ステートメントは「1 つ上の発行者の jwks」で署名検証され、最上位は事前設定された Trust Anchor の公開鍵で検証されます。番号は下の解決ステップに対応します。',
+      "Starting from the leaf, authority_hints are followed to fetch the superiors' Entity Configurations, and Subordinate Statements are fetched from the superiors' fetch endpoints. Each statement is verified with the jwks of the issuer one level up; the top is verified with the pre-configured Trust Anchor public key. Numbers match the resolution steps below."
+    )}</p>
     ${diagramSvg(model, entityId, path, label)}
-    <div class="tcv-legend"><span><i style="background:#155e86"></i>Entity Configuration (自己署名)</span><span><i style="background:#8250df"></i>Subordinate Statement (上位が発行)</span>
-    <span><i style="background:#1a7f37"></i>検証成功</span><span><i style="background:#cf222e"></i>検証失敗</span><span><i style="background:#8c959f"></i>未実施 / 経路外</span><span>破線: authority_hints</span></div></section>
-    ${result ? `<section><h4>② Trust Chain (JWT 配列: [Leaf EC, SS…, TA EC])</h4>${chainStrip(result, label)}</section>` : ''}
-    <section><h4>③ 解決ステップ</h4>${stepList(model, label)}</section>
-    ${metadata ? `<section><h4>④ metadata_policy の適用</h4>${metadataTable(metadata, label)}</section>` : ''}`
+    <div class="tcv-legend"><span><i style="background:#155e86"></i>Entity Configuration (${t('自己署名', 'self-signed')})</span><span><i style="background:#8250df"></i>Subordinate Statement (${t('上位が発行', 'issued by superior')})</span>
+    <span><i style="background:#1a7f37"></i>${t('検証成功', 'verified')}</span><span><i style="background:#cf222e"></i>${t('検証失敗', 'failed')}</span><span><i style="background:#8c959f"></i>${t('未実施 / 経路外', 'not done / off path')}</span><span>${t('破線: authority_hints', 'dashed: authority_hints')}</span></div></section>
+    ${result ? `<section><h4>② Trust Chain (${t('JWT 配列', 'JWT array')}: [Leaf EC, SS…, TA EC])</h4>${chainStrip(result, label)}</section>` : ''}
+    <section><h4>③ ${t('解決ステップ', 'Resolution steps')}</h4>${stepList(model, label)}</section>
+    ${metadata ? `<section><h4>④ ${t('metadata_policy の適用', 'Applying metadata_policy')}</h4>${metadataTable(metadata, label)}</section>` : ''}`
 }

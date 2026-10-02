@@ -1,5 +1,7 @@
 # 学認 IHV プロトタイプ (OpenID Federation + vcknots)
 
+**日本語** | [English](README.en.md)
+
 学認 (GakuNin) の IHV シナリオを、**OpenID Federation** による信頼チェーンの上で
 **Issuer / Holder (Wallet) / Verifier** が動作するプロトタイプです。
 
@@ -36,8 +38,14 @@ npm run demo        # 全エンティティ + Web Wallet (Go) を起動。Go 1.2
 | Trust List | <http://localhost:8731> | Registrar (RP の一時停止・取消)、LoTE、Access CA |
 | Wallet Provider | <http://localhost:8730> | Wallet Instance の一覧と失効 |
 
+**言語の切り替え**: 各画面のヘッダの「日本語 | English」で UI の言語を切り替えられます (`?lang=ja` / `?lang=en`)。
+選んだ言語は `lang` Cookie に保存され、localhost の Cookie はポート間で共有されるため、デモコンソール・各エンティティ・Web Wallet に一度で反映されます。
+Cookie がない場合はブラウザの言語 (Accept-Language) に従い、既定は日本語です。タイムラインのイベントは両言語で記録され、表示時に選択中の言語で表示されます。
+CLI の Wallet (`wallet-instance`) の出力言語は環境変数 `WALLET_LANG` (`ja` / `en`、既定 `ja`) で指定します。
+実装は `src/common/i18n.ts` (TypeScript) と `wallet-instance/i18n.go` (Go) です。
+
 画面上のメッセージ (タイムライン、エラー、Trust Chain の経路、Web Wallet の検証ステップなど) では、Entity ID の URL を「学認Issuer」「NII」などの名称で表示します
-(例: `GET NII (/fetch?sub=学認Issuer) -> 404`。名称の定義は `src/config.ts` の `ENTITY_LABELS`、変換は `src/common/names.ts`。
+(例: `GET NII (/fetch?sub=学認Issuer) -> 404`。名称の定義は `src/config.ts` の `ENTITY_NAMES` (日本語・英語)、変換は `src/common/names.ts`。
 Web Wallet はデモコンソールの `/api/entity-names` から名称を取得)。「Entity ID」欄やプロトコル上の値は URL のままです。
 
 Issuer の Offer 画面と Verifier のリクエスト画面にある **「Web Wallet で開く」** で、QR コードの読み取りの代わりにウォレットが開きます

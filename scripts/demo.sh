@@ -26,7 +26,7 @@ export WALLET_DIR="$WORK/wallet" TRUST_ANCHOR="$ROOT/.data/trust-anchor.json"
 step "1. Wallet Instance -> Wallet Provider: registration + Wallet Attestation"
 "$WALLET" init
 
-step "2. User logs in to 学認Issuer via 機関IdP ($USER_NAME), attributes from 属性Provider"
+step "2. User logs in to the GakuNin Issuer via the Institution IdP ($USER_NAME), attributes from the Attribute Provider"
 AUTHZ=$(curl -s -c "$JAR" -b "$JAR" -o /dev/null -w '%{redirect_url}' "$ISSUER/login")
 TXN=$(curl -s "$AUTHZ" | grep -o 'name="txn" value="[^"]*"' | sed 's/.*value="//;s/"$//')
 curl -s -c "$JAR" -b "$JAR" -L -o /dev/null -d "txn=$TXN&username=$USER_NAME&password=password" "$IDP/login"

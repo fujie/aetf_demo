@@ -1,3 +1,4 @@
+import { t } from '../common/i18n.js'
 import { Hono } from 'hono'
 import type { SigningKey } from '../common/keys.js'
 import { esc, page, escMsg } from '../common/html.js'
@@ -33,7 +34,7 @@ export const createAuthority = (opts: {
     const rows = [...(entity.subordinates?.values() ?? [])]
       .map(
         (s) => `<tr><td><a href="${esc(s.entityId)}/">${escMsg(s.entityId)}</a></td>
-          <td>${esc((s.entityTypes ?? []).join(', '))}${s.disabled ? ' <span class="ng">登録停止中</span>' : ''}${s.wrongJwks ? ' <span class="ng">jwks 不正</span>' : ''}${s.expired ? ' <span class="ng">期限切れ</span>' : ''}</td>
+          <td>${esc((s.entityTypes ?? []).join(', '))}${s.disabled ? ` <span class="ng">${t('登録停止中', 'suspended')}</span>` : ''}${s.wrongJwks ? ` <span class="ng">${t('jwks 不正', 'wrong jwks')}</span>` : ''}${s.expired ? ` <span class="ng">${t('期限切れ', 'expired')}</span>` : ''}</td>
           <td><a href="/fetch?sub=${encodeURIComponent(s.entityId)}">Subordinate Statement</a></td>
           <td>${s.metadataPolicy ? `<pre>${esc(JSON.stringify(s.metadataPolicy, null, 1))}</pre>` : ''}</td></tr>`
       )

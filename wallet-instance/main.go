@@ -77,7 +77,7 @@ func main() {
 		switch os.Args[1] {
 		case "serve":
 			if e := inst.EnsureRegistered(); e != nil {
-				fmt.Fprintf(os.Stderr, "warning: could not confirm the Wallet Instance registration: %s\n", Humanize(e.Error()))
+				fmt.Fprintf(os.Stderr, "warning: could not confirm the Wallet Instance registration: %s\n", Humanize(e.Error(), cliLang()))
 			}
 			err = inst.serve(getenv("WALLET_UI_PORT", strconv.Itoa(basePort()+60)))
 		case "init":
@@ -103,7 +103,7 @@ func main() {
 		}
 	}
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "✘ %s\n", Humanize(err.Error()))
+		fmt.Fprintf(os.Stderr, "✘ %s\n", Humanize(err.Error(), cliLang()))
 		os.Exit(1)
 	}
 }
@@ -148,7 +148,7 @@ func (i *Instance) list() error {
 	}
 	fmt.Printf("%d credential(s)\n", len(creds))
 	for _, c := range creds {
-		fmt.Printf("\n- %s: %s (received %s)\n", c.ID, c.Display.Name, c.ReceivedAt.Format("2006-01-02 15:04:05"))
+		fmt.Printf("\n- %s: %s (received %s)\n", c.ID, c.Display.NameIn(cliLang()), c.ReceivedAt.Format("2006-01-02 15:04:05"))
 		printCredential(c)
 		if c.Status != nil {
 			fmt.Printf("  %-24s %s (idx=%d, Status Issuer: %s)\n", "[Token Status List]", StatusTypeName(c.Status.Status), c.Status.Idx, strings.Join(c.Status.ChainPath, " -> "))

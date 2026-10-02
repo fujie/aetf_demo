@@ -16,8 +16,8 @@ type Step struct {
 	At     time.Time `json:"at"`
 	OK     bool      `json:"ok"`
 	Info   bool      `json:"info,omitempty"`
-	Title  string    `json:"title"`
-	Detail string    `json:"detail,omitempty"`
+	Title  Msg       `json:"title"`
+	Detail Msg       `json:"detail"`
 }
 
 type stepRecorder struct {
@@ -31,7 +31,8 @@ var demoConsoleClient = &http.Client{Timeout: 500 * time.Millisecond}
 
 func (r *stepRecorder) add(s Step) {
 	s.At = time.Now()
-	s.Title, s.Detail = Humanize(s.Title), Humanize(s.Detail)
+	s.Title = Msg{Ja: Humanize(s.Title.Ja, "ja"), En: Humanize(s.Title.En, "en")}
+	s.Detail = Msg{Ja: Humanize(s.Detail.Ja, "ja"), En: Humanize(s.Detail.En, "en")}
 	r.mu.Lock()
 	r.current = append(r.current, s)
 	r.history = append(r.history, s)
@@ -46,10 +47,11 @@ func (r *stepRecorder) add(s Step) {
 		} else if !s.OK {
 			mark = "✘"
 		}
-		if s.Detail != "" {
-			fmt.Printf("%s %s: %s\n", mark, s.Title, s.Detail)
+		lang := cliLang()
+		if d := s.Detail.In(lang); d != "" {
+			fmt.Printf("%s %s: %s\n", mark, s.Title.In(lang), d)
 		} else {
-			fmt.Printf("%s %s\n", mark, s.Title)
+			fmt.Printf("%s %s\n", mark, s.Title.In(lang))
 		}
 	}
 	// best effort: forward to the demo console timeline
@@ -60,7 +62,11 @@ func (r *stepRecorder) add(s Step) {
 		} else if !s.OK {
 			level = "error"
 		}
-		body, _ := json.Marshal(map[string]string{"source": "Wallet Instance", "level": level, "message": s.Title, "detail": s.Detail})
+		body, _ := json.Marshal(map[string]string{
+			"source": "Wallet Instance", "level": level,
+			"message": s.Title.Ja, "message_en": s.Title.En,
+			"detail": s.Detail.Ja, "detail_en": s.Detail.En,
+		})
 		go func() {
 			if resp, err := demoConsoleClient.Post(url+"/api/events", "application/json", bytes.NewReader(body)); err == nil {
 				resp.Body.Close()
@@ -99,16 +105,16 @@ func (r *stepRecorder) recent(n int) []Step {
 	return out
 }
 
-func (i *Instance) ok(title, format string, args ...any) {
-	i.steps.add(Step{OK: true, Title: title, Detail: fmt.Sprintf(format, args...)})
+func (i *Instance) ok(title, detail Msg) {
+	i.steps.add(Step{OK: true, Title: title, Detail: detail})
 }
 
-func (i *Instance) info(title, format string, args ...any) {
-	i.steps.add(Step{OK: true, Info: true, Title: title, Detail: fmt.Sprintf(format, args...)})
+func (i *Instance) info(title, detail Msg) {
+	i.steps.add(Step{OK: true, Info: true, Title: title, Detail: detail})
 }
 
 // fail records a failed step and returns err.
-func (i *Instance) fail(title string, err error) error {
-	i.steps.add(Step{OK: false, Title: title, Detail: err.Error()})
+func (i *Instance) fail(title Msg, err error) error {
+	i.steps.add(Step{OK: false, Title: title, Detail: S("%s", err.Error())})
 	return err
 }

@@ -1,4 +1,5 @@
 import { emit } from '../common/events.js'
+import { bi, t } from '../common/i18n.js'
 import { Hono } from 'hono'
 import * as jose from 'jose'
 import { type SigningKey, jwksOf, signJwt, verifyWithJwks } from '../common/keys.js'
@@ -6,7 +7,7 @@ import { esc, page } from '../common/html.js'
 import { createFederationEntity, mountFederationEndpoints } from '../federation/entity.js'
 import { type TrustAnchorConfig, resolveEntityMetadata } from '../federation/resolver.js'
 
-/** Attributes held by the 属性Provider (e.g. student registry), keyed by eduPersonPrincipalName. */
+/** Attributes held by the Attribute Provider (e.g. student registry), keyed by eduPersonPrincipalName. */
 const ATTRIBUTES: Record<string, Record<string, unknown>> = {
   'taro@example-u.ac.jp': {
     student_number: 'S2026-0001',
@@ -26,7 +27,7 @@ export const ATTRIBUTE_RESPONSE_TYP = 'attribute-response+jwt'
 export const ATTRIBUTE_REQUEST_TYP = 'attribute-request+jwt'
 
 /**
- * 属性Provider: returns additional attributes for a user.
+ * Attribute Provider: returns additional attributes for a user.
  * The requester authenticates with a signed request JWT; its key is taken from its federation
  * metadata (openid_relying_party.jwks) after resolving its Trust Chain.
  * The response is signed with the key in this entity's `attribute_provider` metadata.
@@ -44,7 +45,7 @@ export const createAttributeProvider = (opts: {
     federationKey: opts.federationKey,
     authorityHints: opts.authorityHints,
     metadata: {
-      federation_entity: { organization_name: 'Example University 属性Provider' },
+      federation_entity: { organization_name: 'Example University Attribute Provider' },
       attribute_provider: {
         attribute_endpoint: `${entityId}/attributes`,
         attributes_supported: ['student_number', 'department', 'enrollment_status', 'year_of_study'],
@@ -59,7 +60,7 @@ export const createAttributeProvider = (opts: {
   app.get('/', (c) =>
     c.html(
       page(
-        '属性Provider',
+        t('属性Provider', 'Attribute Provider'),
         `<section><p>Entity ID: <code>${esc(entityId)}</code> / <a href="/.well-known/openid-federation">Entity Configuration</a></p>
         <pre>${esc(JSON.stringify(ATTRIBUTES, null, 2))}</pre></section>`
       )
@@ -86,7 +87,7 @@ export const createAttributeProvider = (opts: {
       })
       subject = String(payload.sub)
     } catch (e) {
-      emit('属性Provider', 'error', '属性要求を拒否', (e as Error).message)
+      emit('属性Provider', 'error', bi('属性要求を拒否', 'Attribute request rejected'), (e as Error).message)
       return c.json({ error: 'unauthorized_client', error_description: (e as Error).message }, 401)
     }
     const attributes = ATTRIBUTES[subject]
@@ -97,7 +98,15 @@ export const createAttributeProvider = (opts: {
       { iss: entityId, aud: requester, sub: subject, iat: now, exp: now + 120, attributes },
       ATTRIBUTE_RESPONSE_TYP
     )
-    emit('属性Provider', 'ok', `${requester} に ${subject} の属性を提供`, `要求者を OpenID Federation (openid_relying_party) で確認、応答に署名: ${Object.keys(attributes).join(', ')}`)
+    emit(
+      '属性Provider',
+      'ok',
+      bi(`${requester} に ${subject} の属性を提供`, `Provided the attributes of ${subject} to ${requester}`),
+      bi(
+        `要求者を OpenID Federation (openid_relying_party) で確認、応答に署名: ${Object.keys(attributes).join(', ')}`,
+        `Requester verified through OpenID Federation (openid_relying_party), response signed: ${Object.keys(attributes).join(', ')}`
+      )
+    )
     return c.body(response, 200, { 'Content-Type': 'application/jwt' })
   })
 

@@ -1,4 +1,5 @@
 import { emit } from '../common/events.js'
+import { type Bi, bi, pick, t } from '../common/i18n.js'
 import { randomUUID } from 'node:crypto'
 import { type Context, Hono } from 'hono'
 import { getCookie, setCookie } from 'hono/cookie'
@@ -86,22 +87,23 @@ const sdJwtWithStatusProvider = (): IssueCredentialProvider => {
   return wrapped
 }
 
+/** Claims of the credential with their display names (Japanese, English). */
 const credentialClaims = [
-  ['family_name', '姓'],
-  ['given_name', '名'],
-  ['name', '氏名'],
-  ['eduPersonPrincipalName', 'ePPN'],
-  ['eduPersonAffiliation', '所属種別'],
-  ['organization', '所属機関'],
-  ['student_number', '学籍番号'],
-  ['department', '学部・学科'],
-  ['enrollment_status', '在籍状況'],
+  ['family_name', '姓', 'Family name'],
+  ['given_name', '名', 'Given name'],
+  ['name', '氏名', 'Name'],
+  ['eduPersonPrincipalName', 'ePPN', 'ePPN'],
+  ['eduPersonAffiliation', '所属種別', 'Affiliation'],
+  ['organization', '所属機関', 'Organization'],
+  ['student_number', '学籍番号', 'Student number'],
+  ['department', '学部・学科', 'Department'],
+  ['enrollment_status', '在籍状況', 'Enrollment status'],
 ] as const
 
 /**
- * 学認Issuer: OID4VCI Credential Issuer + Authorization Server built with vcknots.
- * Configured as a 学認SP: it authenticates users at the 機関IdP and obtains attributes from the
- * 属性Provider, trusting both through OpenID Federation.
+ * GakuNin Issuer: OID4VCI Credential Issuer + Authorization Server built with vcknots.
+ * Configured as a GakuNin SP: it authenticates users at the Institution IdP and obtains attributes
+ * from the Attribute Provider, trusting both through OpenID Federation.
  */
 export const createIssuer = async (opts: {
   entityId: string
@@ -146,11 +148,17 @@ export const createIssuer = async (opts: {
         cryptographic_binding_methods_supported: ['jwk', 'did:key'],
         proof_types_supported: { jwt: { proof_signing_alg_values_supported: ['ES256'] } },
         credential_metadata: {
-          display: [{ name: '学認 学生証明書', locale: 'ja-JP', background_color: '#155e86', text_color: '#FFFFFF' }],
+          display: [
+            { name: '学認 学生証明書', locale: 'ja-JP', background_color: '#155e86', text_color: '#FFFFFF' },
+            { name: 'GakuNin Student Credential', locale: 'en-US', background_color: '#155e86', text_color: '#FFFFFF' },
+          ],
           claims: [
-            ...credentialClaims.map(([path, name]) => ({
+            ...credentialClaims.map(([path, ja, en]) => ({
               path: [path],
-              display: [{ name, locale: 'ja-JP' }],
+              display: [
+                { name: ja, locale: 'ja-JP' },
+                { name: en, locale: 'en-US' },
+              ],
               ...(path === 'eduPersonPrincipalName' ? { mandatory: true } : {}),
             })),
             { path: ['status'] },
@@ -199,7 +207,7 @@ export const createIssuer = async (opts: {
     federationKey: opts.federationKey,
     authorityHints: opts.authorityHints,
     metadata: {
-      federation_entity: { organization_name: '学認Issuer (Example University)' },
+      federation_entity: { organization_name: 'GakuNin Issuer (Example University)' },
       openid_credential_issuer: {
         ...(issuerMetadata as unknown as Record<string, unknown>),
         ...(credentialJwks ? { jwks: credentialJwks } : {}),
@@ -212,7 +220,7 @@ export const createIssuer = async (opts: {
         status_list_aggregation_endpoint: statusListAggregationEndpoint,
       },
       openid_relying_party: {
-        client_name: '学認Issuer',
+        client_name: 'GakuNin Issuer',
         client_registration_types: ['automatic'],
         redirect_uris: [`${baseUrl}/oidc/callback`],
         response_types: ['code'],
@@ -253,25 +261,25 @@ export const createIssuer = async (opts: {
     if (!s.claims) {
       return c.html(
         page(
-          '学認Issuer',
-          `<section><p>学認 学生証明書 (SD-JWT VC) を発行します。まず所属機関の IdP でログインしてください。</p>
-          <p><a class="btn" href="/login">機関IdPでログイン</a></p></section>
+          t('学認Issuer', 'GakuNin Issuer'),
+          `<section><p>${t('学認 学生証明書 (SD-JWT VC) を発行します。まず所属機関の IdP でログインしてください。', 'Issues the GakuNin student credential (SD-JWT VC). Log in at your institution IdP first.')}</p>
+          <p><a class="btn" href="/login">${t('機関IdPでログイン', 'Log in with the Institution IdP')}</a></p></section>
           <section class="mut">Entity ID: <code>${esc(baseUrl)}</code> /
           <a href="/.well-known/openid-federation">Entity Configuration</a> /
           <a href="/.well-known/openid-credential-issuer">Credential Issuer Metadata</a> /
-          <a href="/admin">発行済みクレデンシャル管理</a></section>`
+          <a href="/admin">${t('発行済みクレデンシャル管理', 'Issued credentials')}</a></section>`
         )
       )
     }
     const rows = credentialClaims
-      .map(([k, label]) => `<tr><th>${esc(label)}</th><td><code>${esc(k)}</code></td><td>${esc(JSON.stringify(s.claims?.[k]))}</td></tr>`)
+      .map(([k, ja, en]) => `<tr><th>${esc(t(ja, en))}</th><td><code>${esc(k)}</code></td><td>${esc(JSON.stringify(s.claims?.[k]))}</td></tr>`)
       .join('')
     return c.html(
       page(
-        '学認Issuer',
-        `<section><h3>取得した属性</h3><table>${rows}</table>
-        <p class="mut">機関IdP: ${trustChainHtml(s.idpPath ?? [])}<br>属性Provider: ${trustChainHtml(s.apPath ?? [])}</p></section>
-        <section><form method="post" action="/offer"><button>Credential Offer を作成</button></form></section>`
+        t('学認Issuer', 'GakuNin Issuer'),
+        `<section><h3>${t('取得した属性', 'Obtained attributes')}</h3><table>${rows}</table>
+        <p class="mut">${t('機関IdP', 'Institution IdP')}: ${trustChainHtml(s.idpPath ?? [])}<br>${t('属性Provider', 'Attribute Provider')}: ${trustChainHtml(s.apPath ?? [])}</p></section>
+        <section><form method="post" action="/offer"><button>${t('Credential Offer を作成', 'Create Credential Offer')}</button></form></section>`
       )
     )
   })
@@ -289,13 +297,13 @@ export const createIssuer = async (opts: {
   app.get('/oidc/callback', async (c) => {
     const s = session(c)
     try {
-      // 1. 機関IdP trusted via OpenID Federation; code redeemed with private_key_jwt (src/common/oidc-rp.ts)
+      // 1. Institution IdP trusted via OpenID Federation; code redeemed with private_key_jwt (src/common/oidc-rp.ts)
       const login = await oidc.handleCallback(c.req.query())
       const idToken = login.idToken
       const idp = { chain: { path: login.opTrustChain } }
       const now = Math.floor(Date.now() / 1000)
 
-      // 2. Fetch additional attributes from the 属性Provider (also trusted via federation)
+      // 2. Fetch additional attributes from the Attribute Provider (also trusted via federation)
       const ap = await resolveEntityMetadata<{ attribute_endpoint: string; jwks: { keys: jose.JWK[] } }>(
         opts.attributeProviderEntityId,
         'attribute_provider',
@@ -325,7 +333,18 @@ export const createIssuer = async (opts: {
         if (v !== undefined) claims[k] = v
       }
       s.claims = claims
-      emit('学認Issuer', 'ok', `${String(idToken.sub)} が機関IdPでログイン、属性Providerから属性を取得`, `IdP: ${idp.chain.path.join(' → ')} / 属性Provider: ${ap.chain.path.join(' → ')}`)
+      emit(
+        '学認Issuer',
+        'ok',
+        bi(
+          `${String(idToken.sub)} が機関IdPでログイン、属性Providerから属性を取得`,
+          `${String(idToken.sub)} logged in with the Institution IdP; attributes fetched from the Attribute Provider`
+        ),
+        bi(
+          `IdP: ${idp.chain.path.join(' → ')} / 属性Provider: ${ap.chain.path.join(' → ')}`,
+          `IdP: ${idp.chain.path.join(' → ')} / Attribute Provider: ${ap.chain.path.join(' → ')}`
+        )
+      )
       s.idpPath = idp.chain.path
       s.apPath = ap.chain.path
       return c.redirect('/', 302)
@@ -355,17 +374,25 @@ export const createIssuer = async (opts: {
       })
       persistIssuances()
       const offerUri = `openid-credential-offer://?credential_offer=${encodeURIComponent(JSON.stringify(offer))}`
-      emit('学認Issuer', 'info', `Credential Offer を作成 (${String(s.claims.eduPersonPrincipalName)})`, 'Pre-Authorized Code Flow (vcknots)')
+      emit(
+        '学認Issuer',
+        'info',
+        bi(`Credential Offer を作成 (${String(s.claims.eduPersonPrincipalName)})`, `Created a Credential Offer (${String(s.claims.eduPersonPrincipalName)})`),
+        'Pre-Authorized Code Flow (vcknots)'
+      )
       return c.html(
         page(
           'Credential Offer',
-          `<section><p>Wallet でこの Credential Offer を読み取ってください (有効期限 ${PRE_CODE_TTL_SEC / 60} 分)。</p>
-          <p><a class="btn" href="${esc(`${WALLET_UI_URL}/receive?offer=${encodeURIComponent(offerUri)}`)}" target="_blank">Web Wallet で開く</a></p>
+          `<section><p>${t(
+            `Wallet でこの Credential Offer を読み取ってください (有効期限 ${PRE_CODE_TTL_SEC / 60} 分)。`,
+            `Scan this Credential Offer with the wallet (valid for ${PRE_CODE_TTL_SEC / 60} minutes).`
+          )}</p>
+          <p><a class="btn" href="${esc(`${WALLET_UI_URL}/receive?offer=${encodeURIComponent(offerUri)}`)}" target="_blank">${t('Web Wallet で開く', 'Open in Web Wallet')}</a></p>
           ${await qrSvg(offerUri)}
-          <p>Wallet Instance (CLI) の場合:</p>
+          <p>${t('Wallet Instance (CLI) の場合', 'With the Wallet Instance CLI')}:</p>
           <pre id="cmd">./wallet-instance receive '${esc(offerUri)}'</pre>
           <p class="mut">Offer URI:</p><pre id="offer">${esc(offerUri)}</pre></section>
-          <section><a href="/">戻る</a> / <a href="/admin">発行済みクレデンシャル管理</a></section>`
+          <section><a href="/">${t('戻る', 'Back')}</a> / <a href="/admin">${t('発行済みクレデンシャル管理', 'Issued credentials')}</a></section>`
         )
       )
     } catch (e) {
@@ -374,14 +401,14 @@ export const createIssuer = async (opts: {
     }
   })
 
-  const STATUS_ACTIONS: Record<number, [label: string, target: number][]> = {
+  const STATUS_ACTIONS: Record<number, [label: Bi, target: number][]> = {
     [StatusType.VALID]: [
-      ['一時停止 (SUSPENDED)', StatusType.SUSPENDED],
-      ['失効 (INVALID)', StatusType.INVALID],
+      [bi('一時停止 (SUSPENDED)', 'Suspend (SUSPENDED)'), StatusType.SUSPENDED],
+      [bi('失効 (INVALID)', 'Revoke (INVALID)'), StatusType.INVALID],
     ],
     [StatusType.SUSPENDED]: [
-      ['再開 (VALID)', StatusType.VALID],
-      ['失効 (INVALID)', StatusType.INVALID],
+      [bi('再開 (VALID)', 'Reinstate (VALID)'), StatusType.VALID],
+      [bi('失効 (INVALID)', 'Revoke (INVALID)'), StatusType.INVALID],
     ],
     [StatusType.INVALID]: [],
   }
@@ -393,10 +420,10 @@ export const createIssuer = async (opts: {
         const actions = (STATUS_ACTIONS[value] ?? [])
           .map(
             ([label, target]) =>
-              `<form style="display:inline" method="post" action="/admin/status"><input type="hidden" name="code" value="${esc(i.preAuthorizedCode)}"><input type="hidden" name="status" value="${target}"><button>${esc(label)}</button></form>`
+              `<form style="display:inline" method="post" action="/admin/status"><input type="hidden" name="code" value="${esc(i.preAuthorizedCode)}"><input type="hidden" name="status" value="${target}"><button>${esc(pick(label))}</button></form>`
           )
           .join(' ')
-        return `<tr><td>${esc(i.user)}</td><td>${esc(i.createdAt)}</td><td>${esc(i.issuedAt ?? '未受領')}</td>
+        return `<tr><td>${esc(i.user)}</td><td>${esc(i.createdAt)}</td><td>${esc(i.issuedAt ?? t('未受領', 'not received'))}</td>
         <td>${i.walletClientId ? `<code>${esc(i.walletClientId)}</code><br><span class="mut">${trustChainHtml(i.walletProviderPath ?? [])}</span>` : ''}</td>
         <td>${i.status ? `${escMsg(i.status.uri)}<br>idx=${i.status.idx}` : ''}</td>
         <td>${i.status ? `<span class="${value === StatusType.VALID ? 'ok' : 'ng'}">${esc(statusTypeName(value))}</span> ${actions}` : ''}</td></tr>`
@@ -404,10 +431,10 @@ export const createIssuer = async (opts: {
       .join('')
     return c.html(
       page(
-        '学認Issuer - 発行済みクレデンシャル',
-        `<section><table><tr><th>ユーザー</th><th>Offer作成</th><th>発行</th><th>Wallet Instance</th><th>Status List</th><th>状態</th></tr>${rows}</table></section>
+        t('学認Issuer - 発行済みクレデンシャル', 'GakuNin Issuer - issued credentials'),
+        `<section><table><tr><th>${t('ユーザー', 'User')}</th><th>${t('Offer作成', 'Offer created')}</th><th>${t('発行', 'Issued')}</th><th>Wallet Instance</th><th>Status List</th><th>${t('状態', 'Status')}</th></tr>${rows}</table></section>
         <section class="mut">Status List Aggregation: <a href="${esc(statusListAggregationEndpoint)}">${esc(statusListAggregationEndpoint)}</a></section>
-        <section><a href="/">戻る</a></section>`
+        <section><a href="/">${t('戻る', 'Back')}</a></section>`
       )
     )
   })
@@ -427,7 +454,12 @@ export const createIssuer = async (opts: {
       if (res.ok) {
         issuance.statusValue = target
         persistIssuances()
-        emit('学認Issuer', target === StatusType.VALID ? 'ok' : 'info', `${issuance.user} のクレデンシャルを ${statusTypeName(target)} に変更`, `Status List idx ${issuance.status.idx}`)
+        emit(
+          '学認Issuer',
+          target === StatusType.VALID ? 'ok' : 'info',
+          bi(`${issuance.user} のクレデンシャルを ${statusTypeName(target)} に変更`, `Set the credential of ${issuance.user} to ${statusTypeName(target)}`),
+          `Status List idx ${issuance.status.idx}`
+        )
       }
       else console.warn('[issuer] status update failed', res.status, await res.text())
     }
@@ -461,7 +493,7 @@ export const createIssuer = async (opts: {
     } catch (e) {
       if (e instanceof WalletAttestationError) {
         console.warn('[issuer] wallet attestation rejected:', e.message)
-        emit('学認Issuer', 'error', 'Token リクエストを拒否: Wallet Attestation が無効', e.message)
+        emit('学認Issuer', 'error', bi('Token リクエストを拒否: Wallet Attestation が無効', 'Token request rejected: invalid Wallet Attestation'), e.message)
         return c.json({ error: 'invalid_client', error_description: e.message }, 401)
       }
       throw e
@@ -488,7 +520,7 @@ export const createIssuer = async (opts: {
         persistIssuances()
       }
       console.log(`[issuer] access token issued to wallet ${attestation.clientId} (WP chain: ${attestation.trustChainPath.join(' -> ')})`)
-      emit('学認Issuer', 'ok', 'Wallet Attestation を検証しアクセストークンを発行', `${attestation.walletName ?? ''} ${attestation.clientId} / Wallet Provider: ${attestation.trustChainPath.join(' → ')} / Wallet Instance status: ${attestation.status.statusName}`)
+      emit('学認Issuer', 'ok', bi('Wallet Attestation を検証しアクセストークンを発行', 'Verified the Wallet Attestation and issued an access token'), `${attestation.walletName ?? ''} ${attestation.clientId} / Wallet Provider: ${attestation.trustChainPath.join(' → ')} / Wallet Instance status: ${attestation.status.statusName}`)
       return c.json(accessToken)
     } catch (e) {
       const { body, status } = toErrorResponse(e)
@@ -540,7 +572,7 @@ export const createIssuer = async (opts: {
       issuance.issuedAt = new Date().toISOString()
       persistIssuances()
       console.log(`[issuer] issued ${opts.credentialConfigurationId} for ${issuance.user} (status idx ${issuance.status.idx})`)
-      emit('学認Issuer', 'ok', `SD-JWT VC を発行 (${issuance.user})`, `${opts.credentialConfigurationId}, Status List idx ${issuance.status.idx}`)
+      emit('学認Issuer', 'ok', bi(`SD-JWT VC を発行 (${issuance.user})`, `Issued an SD-JWT VC (${issuance.user})`), `${opts.credentialConfigurationId}, Status List idx ${issuance.status.idx}`)
       return c.json(credential)
     } catch (e) {
       const { body, status } = toErrorResponse(e)

@@ -1,5 +1,6 @@
 import { ENTITY, WALLET_UI_URL } from '../config.js'
 import { esc } from '../common/html.js'
+import { type Bi, pick, t } from '../common/i18n.js'
 
 /**
  * "Who verifies whom, and how": every trust decision made in the prototype, drawn as arrows from
@@ -19,23 +20,23 @@ type Edge = {
   /** entity type whose resolved metadata is used (federation edges) */
   entityType?: string
   /** when it happens */
-  when: string
+  when: Bi
   /** what is checked with the result */
-  what: string
+  what: Bi
   code: string
   /** curvature (px, to the left of travel); default 34 */
   bend?: number
 }
 
-const NODES: Record<NodeKey, { label: string; sub?: string; url: string; x: number; y: number }> = {
-  gakuninSp: { label: '学認SP', sub: '通常のSP', url: ENTITY.gakuninSp, x: 20, y: 40 },
-  idp: { label: '機関IdP', url: ENTITY.idp, x: 330, y: 40 },
-  incommonSp: { label: 'InCommon SP', sub: 'I2 配下', url: ENTITY.incommonSp, x: 640, y: 40 },
+const NODES: Record<NodeKey, { label: Bi | string; sub?: Bi | string; url: string; x: number; y: number }> = {
+  gakuninSp: { label: { ja: '学認SP', en: 'GakuNin SP' }, sub: { ja: '通常のSP', en: 'regular SP' }, url: ENTITY.gakuninSp, x: 20, y: 40 },
+  idp: { label: { ja: '機関IdP', en: 'Institution IdP' }, url: ENTITY.idp, x: 330, y: 40 },
+  incommonSp: { label: 'InCommon SP', sub: { ja: 'I2 配下', en: 'under I2' }, url: ENTITY.incommonSp, x: 640, y: 40 },
   trustList: { label: 'Trust List', sub: 'LoTE / Access CA', url: ENTITY.trustList, x: 1030, y: 40 },
-  attributeProvider: { label: '属性Provider', url: ENTITY.attributeProvider, x: 20, y: 330 },
-  issuer: { label: '学認Issuer', url: ENTITY.issuer, x: 330, y: 330 },
+  attributeProvider: { label: { ja: '属性Provider', en: 'Attribute Provider' }, url: ENTITY.attributeProvider, x: 20, y: 330 },
+  issuer: { label: { ja: '学認Issuer', en: 'GakuNin Issuer' }, url: ENTITY.issuer, x: 330, y: 330 },
   wallet: { label: 'Wallet Instance', sub: 'Holder', url: WALLET_UI_URL, x: 680, y: 330 },
-  verifier: { label: 'Verifier', sub: 'フェデレーション外', url: ENTITY.verifier, x: 1030, y: 330 },
+  verifier: { label: 'Verifier', sub: { ja: 'フェデレーション外', en: 'outside the federation' }, url: ENTITY.verifier, x: 1030, y: 330 },
   walletProvider: { label: 'Wallet Provider', url: ENTITY.walletProvider, x: 500, y: 610 },
   statusList: { label: 'Status List', url: ENTITY.statusList, x: 860, y: 610 },
 }
@@ -44,49 +45,58 @@ const BH = 74
 
 export const TRUST_EDGES: Edge[] = [
   // Wallet Instance
-  { from: 'wallet', to: 'walletProvider', method: 'federation', entityType: 'wallet_provider', when: '登録 / Wallet Attestation 取得時', what: '登録エンドポイントと jwks を取得し、受け取った Wallet Attestation の署名を検証', code: 'wallet-instance/attestation.go' },
-  { from: 'wallet', to: 'issuer', method: 'federation', entityType: 'openid_credential_issuer', when: 'Credential Offer 受信時', what: 'credential_issuer がフェデレーションに属する Issuer であることを確認してから受け取る', code: 'wallet-instance/flows.go' },
-  { from: 'wallet', to: 'trustList', method: 'federation', entityType: 'trust_list_provider', when: '提示リクエスト受信時 (LoTE 取得)', what: 'LoTE の所在 (lote_locations) と署名鍵 (jwks) を取得し、LoTE の JAdES 署名を検証', code: 'wallet-instance/trustlist.go' },
-  { from: 'wallet', to: 'statusList', method: 'federation', entityType: 'status_list_provider', when: '保持中のクレデンシャル / Attestation の状態確認時', what: 'Status List Token の iss (Status Issuer) を確認し、その jwks で署名を検証', code: 'wallet-instance/statuslist.go' },
-  { from: 'wallet', to: 'verifier', method: 'trustlist', when: '提示リクエスト受信時', what: 'Request Object の x5c のアクセス証明書 (ETSI TS 119 411-8) を、LoTE (ETSI TS 119 602) から得た Access CA をトラストアンカーにパス検証・CRL 確認 (vcknots X509TrustChainRoots)。Trust List 自体は Federation で確認済み', code: 'wallet-instance/trustlist.go' },
-  // 学認Issuer
-  { from: 'issuer', to: 'idp', method: 'federation', entityType: 'openid_provider', when: 'ログイン時', what: 'authorization / token エンドポイントと jwks を取得し、ID Token の署名を検証', code: 'src/common/oidc-rp.ts' },
-  { from: 'issuer', to: 'attributeProvider', method: 'federation', entityType: 'attribute_provider', when: '属性取得時', what: 'attribute_endpoint と jwks を取得し、属性応答の署名を検証', code: 'src/services/issuer.ts' },
-  { from: 'issuer', to: 'wallet', method: 'attestation', when: 'Token リクエスト時 (OID4VCI)', what: 'OAuth-Client-Attestation (Wallet Provider 署名) と PoP (Wallet Instance の鍵) を検証し、Wallet Instance の状態 (Status List) を確認', code: 'src/common/wallet-attestation.ts' },
-  { from: 'issuer', to: 'walletProvider', method: 'federation', entityType: 'wallet_provider', when: 'Wallet Attestation 検証時', what: 'Attestation の iss の Trust Chain を解決し、wallet_provider.jwks で Attestation の署名を検証', code: 'src/common/wallet-attestation.ts' },
-  { from: 'issuer', to: 'statusList', method: 'federation', entityType: 'status_list_provider', when: 'Wallet Attestation 検証時', what: 'Attestation が参照する Status List Token の署名を status_list_provider.jwks で検証', code: 'src/status-list/federation-key-resolver.ts' },
-  // 機関IdP
-  { from: 'idp', to: 'issuer', method: 'federation', entityType: 'openid_relying_party', when: '認可リクエスト時 (自動登録)', what: 'redirect_uris と jwks を取得 (事前登録なし)、private_key_jwt を検証。Trust Chain の経路で属性リリースを決定 (NII 経由 = 全属性)', code: 'src/services/idp.ts' },
-  { from: 'idp', to: 'gakuninSp', method: 'federation', entityType: 'openid_relying_party', when: '認可リクエスト時 (自動登録)', what: '同上。NII 経由なので学認の全属性をリリース', code: 'src/services/idp.ts' },
-  { from: 'idp', to: 'incommonSp', method: 'federation', entityType: 'openid_relying_party', when: '認可リクエスト時 (自動登録)', what: '同上。I2 → eduGAIN 経由 (他フェデレーション) なので最小限の属性のみリリース', code: 'src/services/idp.ts' },
-  // 属性Provider
-  { from: 'attributeProvider', to: 'issuer', method: 'federation', entityType: 'openid_relying_party', when: '属性要求受信時', what: '要求者の jwks で属性要求 JWT の署名を検証', code: 'src/services/attribute-provider.ts' },
+  { from: 'wallet', to: 'walletProvider', method: 'federation', entityType: 'wallet_provider', when: { ja: '登録 / Wallet Attestation 取得時', en: 'On registration / when obtaining a Wallet Attestation' }, what: { ja: '登録エンドポイントと jwks を取得し、受け取った Wallet Attestation の署名を検証', en: 'Gets the registration endpoint and jwks, and verifies the signature of the received Wallet Attestation' }, code: 'wallet-instance/attestation.go' },
+  { from: 'wallet', to: 'issuer', method: 'federation', entityType: 'openid_credential_issuer', when: { ja: 'Credential Offer 受信時', en: 'On receiving a Credential Offer' }, what: { ja: 'credential_issuer がフェデレーションに属する Issuer であることを確認してから受け取る', en: 'Accepts only after confirming that credential_issuer is an Issuer in the federation' }, code: 'wallet-instance/flows.go' },
+  { from: 'wallet', to: 'trustList', method: 'federation', entityType: 'trust_list_provider', when: { ja: '提示リクエスト受信時 (LoTE 取得)', en: 'On a presentation request (fetching the LoTE)' }, what: { ja: 'LoTE の所在 (lote_locations) と署名鍵 (jwks) を取得し、LoTE の JAdES 署名を検証', en: 'Gets the LoTE location (lote_locations) and signing key (jwks), and verifies the JAdES signature of the LoTE' }, code: 'wallet-instance/trustlist.go' },
+  { from: 'wallet', to: 'statusList', method: 'federation', entityType: 'status_list_provider', when: { ja: '保持中のクレデンシャル / Attestation の状態確認時', en: 'When checking the status of held credentials / the attestation' }, what: { ja: 'Status List Token の iss (Status Issuer) を確認し、その jwks で署名を検証', en: 'Checks the iss (Status Issuer) of the Status List Token and verifies the signature with its jwks' }, code: 'wallet-instance/statuslist.go' },
+  { from: 'wallet', to: 'verifier', method: 'trustlist', when: { ja: '提示リクエスト受信時', en: 'On a presentation request' }, what: { ja: 'Request Object の x5c のアクセス証明書 (ETSI TS 119 411-8) を、LoTE (ETSI TS 119 602) から得た Access CA をトラストアンカーにパス検証・CRL 確認 (vcknots X509TrustChainRoots)。Trust List 自体は Federation で確認済み', en: 'Validates the path of the access certificate (ETSI TS 119 411-8) in the Request Object x5c to the Access CA taken from the LoTE (ETSI TS 119 602) and checks the CRL (vcknots X509TrustChainRoots). The Trust List itself is checked via the Federation' }, code: 'wallet-instance/trustlist.go' },
+  // GakuNin Issuer
+  { from: 'issuer', to: 'idp', method: 'federation', entityType: 'openid_provider', when: { ja: 'ログイン時', en: 'On login' }, what: { ja: 'authorization / token エンドポイントと jwks を取得し、ID Token の署名を検証', en: 'Gets the authorization / token endpoints and jwks, and verifies the ID Token signature' }, code: 'src/common/oidc-rp.ts' },
+  { from: 'issuer', to: 'attributeProvider', method: 'federation', entityType: 'attribute_provider', when: { ja: '属性取得時', en: 'When fetching attributes' }, what: { ja: 'attribute_endpoint と jwks を取得し、属性応答の署名を検証', en: 'Gets attribute_endpoint and jwks, and verifies the signature of the attribute response' }, code: 'src/services/issuer.ts' },
+  { from: 'issuer', to: 'wallet', method: 'attestation', when: { ja: 'Token リクエスト時 (OID4VCI)', en: 'On the token request (OID4VCI)' }, what: { ja: 'OAuth-Client-Attestation (Wallet Provider 署名) と PoP (Wallet Instance の鍵) を検証し、Wallet Instance の状態 (Status List) を確認', en: 'Verifies OAuth-Client-Attestation (signed by the Wallet Provider) and the PoP (Wallet Instance key), and checks the Wallet Instance status (Status List)' }, code: 'src/common/wallet-attestation.ts' },
+  { from: 'issuer', to: 'walletProvider', method: 'federation', entityType: 'wallet_provider', when: { ja: 'Wallet Attestation 検証時', en: 'When verifying a Wallet Attestation' }, what: { ja: 'Attestation の iss の Trust Chain を解決し、wallet_provider.jwks で Attestation の署名を検証', en: 'Resolves the Trust Chain of the attestation iss and verifies its signature with wallet_provider.jwks' }, code: 'src/common/wallet-attestation.ts' },
+  { from: 'issuer', to: 'statusList', method: 'federation', entityType: 'status_list_provider', when: { ja: 'Wallet Attestation 検証時', en: 'When verifying a Wallet Attestation' }, what: { ja: 'Attestation が参照する Status List Token の署名を status_list_provider.jwks で検証', en: 'Verifies the Status List Token referenced by the attestation with status_list_provider.jwks' }, code: 'src/status-list/federation-key-resolver.ts' },
+  // Institution IdP
+  { from: 'idp', to: 'issuer', method: 'federation', entityType: 'openid_relying_party', when: { ja: '認可リクエスト時 (自動登録)', en: 'On the authorization request (automatic registration)' }, what: { ja: 'redirect_uris と jwks を取得 (事前登録なし)、private_key_jwt を検証。Trust Chain の経路で属性リリースを決定 (NII 経由 = 全属性)', en: 'Gets redirect_uris and jwks (no pre-registration) and verifies private_key_jwt. The Trust Chain path decides attribute release (via NII = all attributes)' }, code: 'src/services/idp.ts' },
+  { from: 'idp', to: 'gakuninSp', method: 'federation', entityType: 'openid_relying_party', when: { ja: '認可リクエスト時 (自動登録)', en: 'On the authorization request (automatic registration)' }, what: { ja: '同上。NII 経由なので学認の全属性をリリース', en: 'Same as above. Via NII, so all GakuNin attributes are released' }, code: 'src/services/idp.ts' },
+  { from: 'idp', to: 'incommonSp', method: 'federation', entityType: 'openid_relying_party', when: { ja: '認可リクエスト時 (自動登録)', en: 'On the authorization request (automatic registration)' }, what: { ja: '同上。I2 → eduGAIN 経由 (他フェデレーション) なので最小限の属性のみリリース', en: 'Same as above. Via I2 → eduGAIN (another federation), so only a minimal attribute set is released' }, code: 'src/services/idp.ts' },
+  // Attribute Provider
+  { from: 'attributeProvider', to: 'issuer', method: 'federation', entityType: 'openid_relying_party', when: { ja: '属性要求受信時', en: 'On an attribute request' }, what: { ja: '要求者の jwks で属性要求 JWT の署名を検証', en: 'Verifies the attribute request JWT with the requester\'s jwks' }, code: 'src/services/attribute-provider.ts' },
   // SPs
-  { from: 'gakuninSp', to: 'idp', method: 'federation', entityType: 'openid_provider', when: 'ログイン時', what: 'エンドポイントと jwks を取得し、ID Token の署名を検証', code: 'src/common/oidc-rp.ts' },
-  { from: 'incommonSp', to: 'idp', method: 'federation', entityType: 'openid_provider', when: 'ログイン時', what: '同上 (I2 側から NII 配下の IdP を eduGAIN 経由で確認)', code: 'src/common/oidc-rp.ts' },
+  { from: 'gakuninSp', to: 'idp', method: 'federation', entityType: 'openid_provider', when: { ja: 'ログイン時', en: 'On login' }, what: { ja: 'エンドポイントと jwks を取得し、ID Token の署名を検証', en: 'Gets the endpoints and jwks, and verifies the ID Token signature' }, code: 'src/common/oidc-rp.ts' },
+  { from: 'incommonSp', to: 'idp', method: 'federation', entityType: 'openid_provider', when: { ja: 'ログイン時', en: 'On login' }, what: { ja: '同上 (I2 側から NII 配下の IdP を eduGAIN 経由で確認)', en: 'Same as above (from the I2 side, the IdP under NII is checked via eduGAIN)' }, code: 'src/common/oidc-rp.ts' },
   // Verifier
-  { from: 'verifier', to: 'trustList', method: 'federation', entityType: 'trust_list_provider', when: '起動時 (Registrar への登録)', what: 'registration_endpoint を取得して登録し、アクセス証明書を受け取る', code: 'src/services/verifier.ts' },
-  { from: 'verifier', to: 'wallet', method: 'attestation', when: 'VP 受信時 (OID4VP direct_post)', what: 'Wallet Attestation + PoP を検証し、Wallet Instance の状態 (Status List) を確認', code: 'src/common/wallet-attestation.ts' },
-  { from: 'verifier', to: 'walletProvider', method: 'federation', entityType: 'wallet_provider', when: 'Wallet Attestation 検証時', what: 'wallet_provider.jwks で Attestation の署名を検証', code: 'src/common/wallet-attestation.ts', bend: 70 },
-  { from: 'verifier', to: 'issuer', method: 'federation', entityType: 'openid_credential_issuer', when: 'VP 受信時', what: 'SD-JWT VC の iss の Trust Chain を解決し、openid_credential_issuer.jwks で署名を検証', code: 'src/services/verifier.ts', bend: 175 },
-  { from: 'verifier', to: 'statusList', method: 'federation', entityType: 'status_list_provider', when: 'VP 受信時 (失効確認)', what: 'クレデンシャルの Status List Token の署名を status_list_provider.jwks で検証し、VALID / SUSPENDED / INVALID を判定', code: 'src/status-list/federation-key-resolver.ts' },
+  { from: 'verifier', to: 'trustList', method: 'federation', entityType: 'trust_list_provider', when: { ja: '起動時 (Registrar への登録)', en: 'At startup (registration at the Registrar)' }, what: { ja: 'registration_endpoint を取得して登録し、アクセス証明書を受け取る', en: 'Gets registration_endpoint, registers and receives an access certificate' }, code: 'src/services/verifier.ts' },
+  { from: 'verifier', to: 'wallet', method: 'attestation', when: { ja: 'VP 受信時 (OID4VP direct_post)', en: 'On receiving the VP (OID4VP direct_post)' }, what: { ja: 'Wallet Attestation + PoP を検証し、Wallet Instance の状態 (Status List) を確認', en: 'Verifies the Wallet Attestation + PoP and checks the Wallet Instance status (Status List)' }, code: 'src/common/wallet-attestation.ts' },
+  { from: 'verifier', to: 'walletProvider', method: 'federation', entityType: 'wallet_provider', when: { ja: 'Wallet Attestation 検証時', en: 'When verifying a Wallet Attestation' }, what: { ja: 'wallet_provider.jwks で Attestation の署名を検証', en: 'Verifies the attestation signature with wallet_provider.jwks' }, code: 'src/common/wallet-attestation.ts', bend: 70 },
+  { from: 'verifier', to: 'issuer', method: 'federation', entityType: 'openid_credential_issuer', when: { ja: 'VP 受信時', en: 'On receiving the VP' }, what: { ja: 'SD-JWT VC の iss の Trust Chain を解決し、openid_credential_issuer.jwks で署名を検証', en: 'Resolves the Trust Chain of the SD-JWT VC iss and verifies the signature with openid_credential_issuer.jwks' }, code: 'src/services/verifier.ts', bend: 175 },
+  { from: 'verifier', to: 'statusList', method: 'federation', entityType: 'status_list_provider', when: { ja: 'VP 受信時 (失効確認)', en: 'On receiving the VP (revocation check)' }, what: { ja: 'クレデンシャルの Status List Token の署名を status_list_provider.jwks で検証し、VALID / SUSPENDED / INVALID を判定', en: 'Verifies the credential\'s Status List Token with status_list_provider.jwks and decides VALID / SUSPENDED / INVALID' }, code: 'src/status-list/federation-key-resolver.ts' },
 ]
 
-const METHODS: Record<Method, { label: string; color: string; desc: string }> = {
+const METHODS: Record<Method, { label: Bi | string; color: string; desc: Bi }> = {
   federation: {
-    label: 'OpenID Federation (Trust Chain 解決)',
+    label: { ja: 'OpenID Federation (Trust Chain 解決)', en: 'OpenID Federation (Trust Chain resolution)' },
     color: '#155e86',
-    desc: '相手の Entity ID から eduGAIN TA まで Trust Chain を解決・検証し、metadata_policy 適用後のメタデータ (矢印の entity type) の鍵やエンドポイントを使う',
+    desc: {
+      ja: '相手の Entity ID から eduGAIN TA まで Trust Chain を解決・検証し、metadata_policy 適用後のメタデータ (矢印の entity type) の鍵やエンドポイントを使う',
+      en: "Resolves and validates the Trust Chain from the peer's Entity ID up to the eduGAIN TA, and uses keys and endpoints from the resolved metadata (of the entity type on the arrow)",
+    },
   },
   trustlist: {
-    label: 'Trust List (ETSI LoTE + アクセス証明書)',
+    label: { ja: 'Trust List (ETSI LoTE + アクセス証明書)', en: 'Trust List (ETSI LoTE + access certificate)' },
     color: '#cf222e',
-    desc: 'Verifier はフェデレーション外。Trust List の LoTE から Access CA を得て、Verifier のアクセス証明書 (X.509) を検証',
+    desc: {
+      ja: 'Verifier はフェデレーション外。Trust List の LoTE から Access CA を得て、Verifier のアクセス証明書 (X.509) を検証',
+      en: "The Verifier is outside the federation. The Access CA is taken from the Trust List's LoTE to validate the Verifier's access certificate (X.509)",
+    },
   },
   attestation: {
     label: 'Wallet Attestation',
     color: '#8250df',
-    desc: 'Wallet Provider が発行した Attestation と PoP で Wallet Instance を検証 (Wallet Provider 自体は Federation で確認)',
+    desc: {
+      ja: 'Wallet Provider が発行した Attestation と PoP で Wallet Instance を検証 (Wallet Provider 自体は Federation で確認)',
+      en: 'The Wallet Instance is verified with the attestation issued by the Wallet Provider and a PoP (the Wallet Provider itself is checked via the Federation)',
+    },
   },
 }
 
@@ -118,13 +128,13 @@ const diagram = () => {
       <path d="M${p1.x.toFixed(1)} ${p1.y.toFixed(1)} Q${ctrl.x.toFixed(1)} ${ctrl.y.toFixed(1)} ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}" stroke="${m.color}" marker-end="url(#tm-${e.method})"/>
       <circle cx="${mid.x.toFixed(1)}" cy="${mid.y.toFixed(1)}" r="12" fill="#fff" stroke="${m.color}" stroke-width="2"/>
       <text x="${mid.x.toFixed(1)}" y="${(mid.y + 4.5).toFixed(1)}" fill="${m.color}">${n}</text>
-      <title>${esc(`${n}. ${NODES[e.from].label} → ${NODES[e.to].label}: ${m.label}${e.entityType ? ` (${e.entityType})` : ''}`)}</title></g>`
+      <title>${esc(`${n}. ${pick(NODES[e.from].label)} → ${pick(NODES[e.to].label)}: ${pick(m.label)}${e.entityType ? ` (${e.entityType})` : ''}`)}</title></g>`
   }).join('')
   const nodes = (Object.entries(NODES) as [NodeKey, (typeof NODES)[NodeKey]][])
     .map(
       ([k, n]) => `<g class="node" data-key="${k}"><rect x="${n.x}" y="${n.y}" width="${BW}" height="${BH}" rx="10"/>
-      <text x="${n.x + BW / 2}" y="${n.y + (n.sub ? 32 : 43)}" class="nl">${esc(n.label)}</text>
-      ${n.sub ? `<text x="${n.x + BW / 2}" y="${n.y + 54}" class="ns">${esc(n.sub)}</text>` : ''}</g>`
+      <text x="${n.x + BW / 2}" y="${n.y + (n.sub ? 32 : 43)}" class="nl">${esc(pick(n.label))}</text>
+      ${n.sub ? `<text x="${n.x + BW / 2}" y="${n.y + 54}" class="ns">${esc(pick(n.sub))}</text>` : ''}</g>`
     )
     .join('')
   const markers = (Object.entries(METHODS) as [Method, (typeof METHODS)[Method]][])
@@ -134,20 +144,20 @@ const diagram = () => {
     )
     .join('')
   return `<svg class="tm" viewBox="0 0 1260 700" xmlns="http://www.w3.org/2000/svg"><defs>${markers}</defs>
-    <g class="ta"><rect x="20" y="168" width="250" height="60" rx="8"/><text x="145" y="192" class="tat">🔑 eduGAIN Trust Anchor 公開鍵</text>
-    <text x="145" y="212" class="tas">全エンティティに事前設定 (Federation の起点)</text></g>
+    <g class="ta"><rect x="20" y="168" width="250" height="60" rx="8"/><text x="145" y="192" class="tat">🔑 eduGAIN Trust Anchor ${t('公開鍵', 'key')}</text>
+    <text x="145" y="212" class="tas">${t('全エンティティに事前設定 (Federation の起点)', 'pre-configured everywhere (root of trust)')}</text></g>
     ${edges}${nodes}</svg>`
 }
 
 const table = () =>
-  `<table class="tmt"><thead><tr><th>#</th><th>検証する側 → 検証される側</th><th>方法</th><th>いつ</th><th>何を確認するか</th><th>実装</th></tr></thead><tbody>${TRUST_EDGES.map(
+  `<table class="tmt"><thead><tr><th>#</th><th>${t('検証する側 → 検証される側', 'Verifier side → verified side')}</th><th>${t('方法', 'Method')}</th><th>${t('いつ', 'When')}</th><th>${t('何を確認するか', 'What is checked')}</th><th>${t('実装', 'Code')}</th></tr></thead><tbody>${TRUST_EDGES.map(
     (e, i) => {
       const m = METHODS[e.method]
       const how = e.entityType
-        ? `<span class="mtag" style="background:${m.color}">Federation</span> <code>${esc(e.entityType)}</code><br><a href="/trust-chain?entity=${encodeURIComponent(NODES[e.to].url)}" target="_blank">Trust Chain を図で見る</a>`
+        ? `<span class="mtag" style="background:${m.color}">Federation</span> <code>${esc(e.entityType)}</code><br><a href="/trust-chain?entity=${encodeURIComponent(NODES[e.to].url)}" target="_blank">${t('Trust Chain を図で見る', 'View the Trust Chain')}</a>`
         : `<span class="mtag" style="background:${m.color}">${esc(e.method === 'trustlist' ? 'Trust List' : 'Wallet Attestation')}</span>`
       return `<tr data-n="${i + 1}" data-from="${e.from}" data-to="${e.to}"><td><span class="tn" style="border-color:${m.color};color:${m.color}">${i + 1}</span></td>
-      <td><b>${esc(NODES[e.from].label)}</b> → <b>${esc(NODES[e.to].label)}</b></td><td>${how}</td><td>${esc(e.when)}</td><td>${esc(e.what)}</td><td><code>${esc(e.code)}</code></td></tr>`
+      <td><b>${esc(pick(NODES[e.from].label))}</b> → <b>${esc(pick(NODES[e.to].label))}</b></td><td>${how}</td><td>${esc(pick(e.when))}</td><td>${esc(pick(e.what))}</td><td><code>${esc(e.code)}</code></td></tr>`
     }
   ).join('')}</tbody></table>`
 
@@ -170,23 +180,26 @@ table.tmt{font-size:13px}table.tmt tr.hl td{background:#fff8c5}table.tmt tr.dim{
 `
 
 export const trustMapBody = () => `
-<section><h3>誰が誰を、どうやって検証しているか</h3>
-<p class="mut">矢印は「検証する側 → 検証される側」。エンティティをクリックすると、そのエンティティが<b>検証する</b>矢印 (実線) と<b>検証される</b>矢印 (破線) だけを表示します。番号や表の行にマウスを乗せると対応する矢印が強調されます。</p>
-<div class="tmbar" id="tmbar"><button class="on" data-key="">すべて</button>${(Object.entries(NODES) as [NodeKey, (typeof NODES)[NodeKey]][])
-  .map(([k, n]) => `<button data-key="${k}">${esc(n.label)}</button>`)
+<section><h3>${t('誰が誰を、どうやって検証しているか', 'Who verifies whom, and how')}</h3>
+<p class="mut">${t(
+  '矢印は「検証する側 → 検証される側」。エンティティをクリックすると、そのエンティティが<b>検証する</b>矢印 (実線) と<b>検証される</b>矢印 (破線) だけを表示します。番号や表の行にマウスを乗せると対応する矢印が強調されます。',
+  'Arrows point from the verifying entity to the verified entity. Click an entity to show only the arrows where it <b>verifies</b> (solid) and where it <b>is verified</b> (dashed). Hover over a number or a table row to highlight the arrow.'
+)}</p>
+<div class="tmbar" id="tmbar"><button class="on" data-key="">${t('すべて', 'All')}</button>${(Object.entries(NODES) as [NodeKey, (typeof NODES)[NodeKey]][])
+  .map(([k, n]) => `<button data-key="${k}">${esc(pick(n.label))}</button>`)
   .join('')}</div>
 ${diagram()}
 <div class="legend">${Object.values(METHODS)
-  .map((m) => `<div><b style="background:${m.color}"></b><strong>${esc(m.label)}</strong><br><span class="mut">${esc(m.desc)}</span></div>`)
+  .map((m) => `<div><b style="background:${m.color}"></b><strong>${esc(pick(m.label))}</strong><br><span class="mut">${esc(pick(m.desc))}</span></div>`)
   .join('')}</div>
 <p class="mut" id="tmsum"></p></section>
-<section><h3>検証の一覧</h3>${table()}</section>
+<section><h3>${t('検証の一覧', 'All verifications')}</h3>${table()}</section>
 <script>
 (() => {
   const svg = document.querySelector('.tm'), rows = [...document.querySelectorAll('table.tmt tbody tr')]
   const edges = [...svg.querySelectorAll('.edge')], nodes = [...svg.querySelectorAll('.node')]
   const buttons = [...document.querySelectorAll('#tmbar button')], sum = document.getElementById('tmsum')
-  const names = ${JSON.stringify(Object.fromEntries(Object.entries(NODES).map(([k, n]) => [k, n.label])))}
+  const names = ${JSON.stringify(Object.fromEntries(Object.entries(NODES).map(([k, n]) => [k, pick(n.label)])))}
   function select(key) {
     svg.classList.toggle('filtered', !!key)
     for (const b of buttons) b.classList.toggle('on', b.dataset.key === key)
@@ -194,7 +207,7 @@ ${diagram()}
     for (const e of edges) { e.classList.toggle('out', e.dataset.from === key); e.classList.toggle('in', e.dataset.to === key) }
     let o = 0, i = 0
     for (const r of rows) { const rel = !key || r.dataset.from === key || r.dataset.to === key; r.classList.toggle('dim', !rel); if (key && r.dataset.from === key) o++; if (key && r.dataset.to === key) i++ }
-    sum.textContent = key ? names[key] + ' が検証する相手: ' + o + ' 件 (実線) / ' + names[key] + ' を検証する相手: ' + i + ' 件 (破線)' : ''
+    sum.textContent = key ? ${t("names[key] + ' が検証する相手: ' + o + ' 件 (実線) / ' + names[key] + ' を検証する相手: ' + i + ' 件 (破線)'", "names[key] + ' verifies: ' + o + ' (solid) / verified by: ' + i + ' (dashed)'")} : ''
   }
   function hl(n, on) { for (const e of edges) if (e.dataset.n === n) e.classList.toggle('hl', on); for (const r of rows) if (r.dataset.n === n) r.classList.toggle('hl', on) }
   for (const b of buttons) b.onclick = () => select(b.dataset.key)

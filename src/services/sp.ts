@@ -4,26 +4,27 @@ import { getCookie, setCookie } from 'hono/cookie'
 import { type SigningKey, jwksOf } from '../common/keys.js'
 import { esc, page, trustChainHtml, escMsg } from '../common/html.js'
 import { emit } from '../common/events.js'
+import { bi, pick, t } from '../common/i18n.js'
 import { createOidcRp } from '../common/oidc-rp.js'
 import { createFederationEntity, mountFederationEndpoints } from '../federation/entity.js'
 import type { TrustAnchorConfig } from '../federation/resolver.js'
 
 export type SpSession = { claims: Record<string, unknown>; opTrustChain: string[]; loggedInAt: string }
 
-/** Labels of the attributes released by the 機関IdP. */
-const CLAIM_LABELS: Record<string, string> = {
-  name: '氏名',
-  family_name: '姓',
-  given_name: '名',
-  email: 'メール',
-  eduPersonPrincipalName: 'ePPN',
-  eduPersonAffiliation: '所属種別',
-  organization: '所属機関',
+/** Labels of the attributes released by the Institution IdP. */
+const CLAIM_LABELS: Record<string, { ja: string; en: string }> = {
+  name: { ja: '氏名', en: 'Name' },
+  family_name: { ja: '姓', en: 'Family name' },
+  given_name: { ja: '名', en: 'Given name' },
+  email: { ja: 'メール', en: 'Email' },
+  eduPersonPrincipalName: { ja: 'ePPN', en: 'ePPN' },
+  eduPersonAffiliation: { ja: '所属種別', en: 'Affiliation' },
+  organization: { ja: '所属機関', en: 'Organization' },
 }
 
 /**
  * Mounts federated OIDC login (/login, /oidc/callback, /logout) on an SP app: the SP is an
- * `openid_relying_party` federation entity and logs users in at an OP (the 機関IdP) found through
+ * `openid_relying_party` federation entity and logs users in at an OP (the Institution IdP) found through
  * OpenID Federation, without pre-registration at the OP.
  */
 export const mountFederatedLogin = (
@@ -53,10 +54,18 @@ export const mountFederatedLogin = (
       const sid = randomUUID()
       sessions.set(sid, { claims: { sub, ...claims }, opTrustChain: login.opTrustChain, loggedInAt: new Date().toISOString() })
       setCookie(c, cookie, sid, { httpOnly: true, sameSite: 'Lax', path: '/' })
-      emit(opts.spName, 'ok', `${String(sub)} が機関IdPでログイン`, `IdP: ${login.opTrustChain.join(' → ')} / 受け取った属性: ${Object.keys(claims).join(', ')}`)
+      emit(
+        opts.spName,
+        'ok',
+        bi(`${String(sub)} が機関IdPでログイン`, `${String(sub)} logged in with the Institution IdP`),
+        bi(
+          `IdP: ${login.opTrustChain.join(' → ')} / 受け取った属性: ${Object.keys(claims).join(', ')}`,
+          `IdP: ${login.opTrustChain.join(' → ')} / received attributes: ${Object.keys(claims).join(', ')}`
+        )
+      )
       return c.redirect('/', 302)
     } catch (e) {
-      emit(opts.spName, 'error', 'ログインに失敗', (e as Error).message)
+      emit(opts.spName, 'error', bi('ログインに失敗', 'Login failed'), (e as Error).message)
       return c.html(page('Error', `<pre class="ng">${escMsg((e as Error).message)}</pre>`), 400)
     }
   })
@@ -71,22 +80,25 @@ export const mountFederatedLogin = (
   const loginPanel = (c: Context, opts2: { idpLabel: string }) => {
     const s = current(c)
     if (!s) {
-      return `<section><p>${esc(opts2.idpLabel)} のアカウントでログインできます (デモユーザー: taro / hanako、パスワード password)。</p>
-        <p><a class="btn" href="/login">学認の機関IdPでログイン</a></p></section>`
+      return `<section><p>${t(
+        `${esc(opts2.idpLabel)} のアカウントでログインできます (デモユーザー: taro / hanako、パスワード password)。`,
+        `Log in with your ${esc(opts2.idpLabel)} account (demo users: taro / hanako, password: password).`
+      )}</p>
+        <p><a class="btn" href="/login">${t('学認の機関IdPでログイン', 'Log in with your GakuNin institution IdP')}</a></p></section>`
     }
     const rows = Object.entries(s.claims)
-      .map(([k, v]) => `<tr><th>${esc(CLAIM_LABELS[k] ?? k)}</th><td><code>${esc(k)}</code></td><td>${esc(typeof v === 'string' ? v : JSON.stringify(v))}</td></tr>`)
+      .map(([k, v]) => `<tr><th>${esc(pick(CLAIM_LABELS[k]) ?? k)}</th><td><code>${esc(k)}</code></td><td>${esc(typeof v === 'string' ? v : JSON.stringify(v))}</td></tr>`)
       .join('')
-    return `<section><h3 class="ok">ログイン中: ${esc(String(s.claims.name ?? s.claims.sub))}</h3>
-      <p class="mut">IdP を OpenID Federation で確認: ${trustChainHtml(s.opTrustChain)}</p>
-      <h4>IdP から受け取った属性</h4><table>${rows}</table>
-      <form method="post" action="/logout" style="margin-top:10px"><button>ログアウト</button></form></section>`
+    return `<section><h3 class="ok">${t('ログイン中', 'Logged in')}: ${esc(String(s.claims.name ?? s.claims.sub))}</h3>
+      <p class="mut">${t('IdP を OpenID Federation で確認', 'IdP verified through OpenID Federation')}: ${trustChainHtml(s.opTrustChain)}</p>
+      <h4>${t('IdP から受け取った属性', 'Attributes received from the IdP')}</h4><table>${rows}</table>
+      <form method="post" action="/logout" style="margin-top:10px"><button>${t('ログアウト', 'Log out')}</button></form></section>`
   }
 
   return { current, loginPanel, redirectUri: oidc.redirectUri }
 }
 
-/** 通常の学認SP: a regular service provider of the 学認 federation (e.g. an e-journal platform). */
+/** Regular GakuNin SP: a regular service provider of the GakuNin federation (e.g. an e-journal platform). */
 export const createGakuninSp = (opts: {
   entityId: string
   federationKey: SigningKey
@@ -95,13 +107,13 @@ export const createGakuninSp = (opts: {
   anchors: TrustAnchorConfig[]
   idpEntityId: string
 }) => {
-  const name = '学認SP (電子ジャーナル)'
+  const name = 'GakuNin SP (e-journal)'
   const entity = createFederationEntity({
     entityId: opts.entityId,
     federationKey: opts.federationKey,
     authorityHints: opts.authorityHints,
     metadata: {
-      federation_entity: { organization_name: 'Example E-Journal Platform (学認SP)' },
+      federation_entity: { organization_name: 'Example E-Journal Platform (GakuNin SP)' },
       openid_relying_party: {
         client_name: name,
         client_registration_types: ['automatic'],
@@ -121,16 +133,23 @@ export const createGakuninSp = (opts: {
     const s = login.current(c)
     const affiliations = (s?.claims.eduPersonAffiliation as string[] | undefined) ?? []
     const content = s
-      ? `<section><h3>論文アクセス</h3>
-          ${affiliations.includes('member') || affiliations.includes('student') ? '<p class="ok">所属機関の契約により全文を閲覧できます。</p><ul><li>Journal of Federated Identity, Vol.12 — 全文 PDF</li><li>Trust Frameworks for Academia — 全文 PDF</li></ul>' : '<p class="ng">所属機関の契約がありません。</p>'}
-          <p class="mut">eduPersonAffiliation に基づくアクセス制御 (学認SP の典型的な利用例)</p></section>`
+      ? `<section><h3>${t('論文アクセス', 'Article access')}</h3>
+          ${
+            affiliations.includes('member') || affiliations.includes('student')
+              ? `<p class="ok">${t('所属機関の契約により全文を閲覧できます。', "Full text is available through your institution's subscription.")}</p><ul><li>Journal of Federated Identity, Vol.12 — ${t('全文 PDF', 'full-text PDF')}</li><li>Trust Frameworks for Academia — ${t('全文 PDF', 'full-text PDF')}</li></ul>`
+              : `<p class="ng">${t('所属機関の契約がありません。', 'Your institution has no subscription.')}</p>`
+          }
+          <p class="mut">${t('eduPersonAffiliation に基づくアクセス制御 (学認SP の典型的な利用例)', 'Access control based on eduPersonAffiliation (a typical GakuNin SP use case)')}</p></section>`
       : ''
     return c.html(
       page(
-        name,
-        `${login.loginPanel(c, { idpLabel: '所属機関 (学認)' })}${content}
+        t('学認SP (電子ジャーナル)', 'GakuNin SP (e-journal)'),
+        `${login.loginPanel(c, { idpLabel: t('所属機関 (学認)', 'institution (GakuNin)') })}${content}
         <section class="mut">Entity ID: <code>${esc(opts.entityId)}</code> / <a href="/.well-known/openid-federation">Entity Configuration</a>
-        — NII 配下の <code>openid_relying_party</code> として登録 (機関IdPへは事前登録なし、Federation の自動登録で接続)</section>`
+        — ${t(
+          'NII 配下の <code>openid_relying_party</code> として登録 (機関IdPへは事前登録なし、Federation の自動登録で接続)',
+          'registered under NII as an <code>openid_relying_party</code> (not pre-registered at the Institution IdP; connects via federation automatic registration)'
+        )}</section>`
       )
     )
   })

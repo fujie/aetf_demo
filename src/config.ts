@@ -16,10 +16,10 @@ export const PORTS = {
   trustAnchor: BASE_PORT + 0, // Trust Anchor (eduGAIN)
   nii: BASE_PORT + 1, // Intermediate Authority (NII)
   i2: BASE_PORT + 2, // Intermediate Authority (Internet2 / InCommon)
-  idp: BASE_PORT + 10, // 機関IdP
-  attributeProvider: BASE_PORT + 11, // 属性Provider
-  issuer: BASE_PORT + 20, // 学認Issuer
-  gakuninSp: BASE_PORT + 25, // 通常の学認SP
+  idp: BASE_PORT + 10, // Institution IdP
+  attributeProvider: BASE_PORT + 11, // Attribute Provider
+  issuer: BASE_PORT + 20, // GakuNin Issuer
+  gakuninSp: BASE_PORT + 25, // regular GakuNin SP
   walletProvider: BASE_PORT + 30, // Wallet Provider
   trustList: BASE_PORT + 31, // Trust List (Registrar / Access CA / LoTE)
   statusList: BASE_PORT + 32, // Status List
@@ -31,23 +31,23 @@ export const ENTITY = Object.fromEntries(
   Object.entries(PORTS).map(([k, port]) => [k, url(port)])
 ) as Record<keyof typeof PORTS, string>
 
-/** Display names of the entities (diagrams). */
-export const ENTITY_LABELS: Record<string, string> = {
-  [ENTITY.trustAnchor]: 'eduGAIN (TA)',
-  [ENTITY.nii]: 'NII',
-  [ENTITY.i2]: 'I2',
-  [ENTITY.idp]: '機関IdP',
-  [ENTITY.attributeProvider]: '属性Provider',
-  [ENTITY.issuer]: '学認Issuer',
-  [ENTITY.gakuninSp]: '学認SP',
-  [ENTITY.walletProvider]: 'Wallet Provider',
-  [ENTITY.trustList]: 'Trust List',
-  [ENTITY.statusList]: 'Status List',
-  [ENTITY.verifier]: 'Verifier',
-  [ENTITY.incommonSp]: 'InCommon SP',
+/** Display names of the entities (Japanese / English). */
+export const ENTITY_NAMES: Record<string, { ja: string; en: string }> = {
+  [ENTITY.trustAnchor]: { ja: 'eduGAIN (TA)', en: 'eduGAIN (TA)' },
+  [ENTITY.nii]: { ja: 'NII', en: 'NII' },
+  [ENTITY.i2]: { ja: 'I2', en: 'I2' },
+  [ENTITY.idp]: { ja: '機関IdP', en: 'Institution IdP' },
+  [ENTITY.attributeProvider]: { ja: '属性Provider', en: 'Attribute Provider' },
+  [ENTITY.issuer]: { ja: '学認Issuer', en: 'GakuNin Issuer' },
+  [ENTITY.gakuninSp]: { ja: '学認SP', en: 'GakuNin SP' },
+  [ENTITY.walletProvider]: { ja: 'Wallet Provider', en: 'Wallet Provider' },
+  [ENTITY.trustList]: { ja: 'Trust List', en: 'Trust List' },
+  [ENTITY.statusList]: { ja: 'Status List', en: 'Status List' },
+  [ENTITY.verifier]: { ja: 'Verifier', en: 'Verifier' },
+  [ENTITY.incommonSp]: { ja: 'InCommon SP', en: 'InCommon SP' },
 }
 
-/** Credential configuration issued by the 学認Issuer. */
+/** Credential configuration issued by the GakuNin Issuer. */
 export const CREDENTIAL_CONFIGURATION_ID = 'GakuninStudentCredential'
 export const CREDENTIAL_VCT = `${ENTITY.issuer}/vct/GakuninStudentCredential`
 

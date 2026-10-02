@@ -1,35 +1,34 @@
 package main
 
-import (
-	"net/url"
-	"regexp"
-	"strings"
-	"testing"
-)
+import "testing"
 
 func TestHumanize(t *testing.T) {
-	ids := []string{"http://localhost:8720", "http://localhost:8701"}
-	names := map[string]string{ids[0]: "学認Issuer", ids[1]: "NII"}
-	enc := []string{regexp.QuoteMeta(url.QueryEscape(ids[0])), regexp.QuoteMeta(url.QueryEscape(ids[1]))}
-	plain := []string{regexp.QuoteMeta(ids[0]), regexp.QuoteMeta(ids[1])}
-	displayNames = entityNames{
-		loaded:  true,
-		names:   names,
-		encoded: regexp.MustCompile(strings.Join(enc, "|")),
-		plain:   regexp.MustCompile(`(` + strings.Join(plain, "|") + `)([0-9]?)((?:/[^\s"'<>,;:)\]]*)?)`),
-	}
+	displayNames = entityNames{}
+	displayNames.setNames(map[string]map[string]string{
+		"ja": {"http://localhost:8720": "学認Issuer", "http://localhost:8701": "NII"},
+		"en": {"http://localhost:8720": "GakuNin Issuer", "http://localhost:8701": "NII"},
+	})
 	defer func() { displayNames = entityNames{} }()
-	cases := map[string]string{
-		"no valid trust chain for http://localhost:8720: GET http://localhost:8701/fetch?sub=http%3A%2F%2Flocalhost%3A8720 -> 404": "no valid trust chain for 学認Issuer: GET NII (/fetch?sub=学認Issuer) -> 404",
-		"at http://localhost:8720/token: 401": "at 学認Issuer (/token): 401",
-		"http://localhost:87201/x":            "http://localhost:87201/x",
+	in := "no valid trust chain for http://localhost:8720: GET http://localhost:8701/fetch?sub=http%3A%2F%2Flocalhost%3A8720 -> 404"
+	cases := []struct{ in, lang, want string }{
+		{in, "ja", "no valid trust chain for 学認Issuer: GET NII (/fetch?sub=学認Issuer) -> 404"},
+		{in, "en", "no valid trust chain for GakuNin Issuer: GET NII (/fetch?sub=GakuNin Issuer) -> 404"},
+		{"at http://localhost:8720/token: 401", "en", "at GakuNin Issuer (/token): 401"},
+		{"http://localhost:87201/x", "ja", "http://localhost:87201/x"},
 	}
-	for in, want := range cases {
-		if got := Humanize(in); got != want {
-			t.Errorf("Humanize(%q) = %q, want %q", in, got, want)
+	for _, c := range cases {
+		if got := Humanize(c.in, c.lang); got != c.want {
+			t.Errorf("Humanize(%q, %s) = %q, want %q", c.in, c.lang, got, c.want)
 		}
 	}
-	if got := NameOf("http://localhost:8720/"); got != "学認Issuer" {
+	if got := NameOf("http://localhost:8720/", "en"); got != "GakuNin Issuer" {
 		t.Errorf("NameOf = %q", got)
+	}
+}
+
+func TestMsg(t *testing.T) {
+	m := M("日本語", "English")
+	if m.In("ja") != "日本語" || m.In("en") != "English" || M("のみ", "").In("en") != "のみ" {
+		t.Errorf("Msg.In: %+v", m)
 	}
 }
