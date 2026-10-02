@@ -33,6 +33,7 @@ import { createFederationEntity, mountFederationEndpoints } from '../federation/
 import { type TrustAnchorConfig, resolveEntityMetadata } from '../federation/resolver.js'
 import { WALLET_UI_URL } from '../config.js'
 import { StatusType, statusTypeName } from '../status-list/token-status-list.js'
+import { createOidcRp } from '../common/oidc-rp.js'
 import { ATTRIBUTE_REQUEST_TYP, ATTRIBUTE_RESPONSE_TYP } from './attribute-provider.js'
 
 const PRE_CODE_TTL_SEC = 10 * 60
@@ -269,26 +270,11 @@ export const createIssuer = async (opts: {
     )
   })
 
+  const oidc = createOidcRp({ entityId: baseUrl, rpKey: opts.rpKey, anchors: opts.anchors, scope: 'openid profile email gakunin' })
+
   app.get('/login', async (c) => {
-    const s = session(c)
-    s.state = randomUUID()
-    s.nonce = randomUUID()
     try {
-      const { metadata } = await resolveEntityMetadata<{ authorization_endpoint: string }>(
-        opts.idpEntityId,
-        'openid_provider',
-        opts.anchors
-      )
-      const url = new URL(metadata.authorization_endpoint)
-      url.search = new URLSearchParams({
-        response_type: 'code',
-        client_id: baseUrl,
-        redirect_uri: `${baseUrl}/oidc/callback`,
-        scope: 'openid profile email gakunin',
-        state: s.state,
-        nonce: s.nonce,
-      }).toString()
-      return c.redirect(url.toString(), 302)
+      return c.redirect(await oidc.authorizationUrl(opts.idpEntityId), 302)
     } catch (e) {
       return c.html(page('Error', `<pre class="ng">${esc((e as Error).message)}</pre>`), 500)
     }
@@ -296,44 +282,12 @@ export const createIssuer = async (opts: {
 
   app.get('/oidc/callback', async (c) => {
     const s = session(c)
-    const { code, state } = c.req.query()
-    if (!code || !state || state !== s.state) {
-      return c.html(page('Error', '<p class="ng">invalid state</p>'), 400)
-    }
     try {
-      // 1. Trust the 機関IdP via OpenID Federation and redeem the code with private_key_jwt
-      const idp = await resolveEntityMetadata<{
-        issuer: string
-        token_endpoint: string
-        jwks: { keys: jose.JWK[] }
-      }>(opts.idpEntityId, 'openid_provider', opts.anchors)
+      // 1. 機関IdP trusted via OpenID Federation; code redeemed with private_key_jwt (src/common/oidc-rp.ts)
+      const login = await oidc.handleCallback(c.req.query())
+      const idToken = login.idToken
+      const idp = { chain: { path: login.opTrustChain } }
       const now = Math.floor(Date.now() / 1000)
-      const clientAssertion = await signJwt(
-        opts.rpKey,
-        { iss: baseUrl, sub: baseUrl, aud: idp.metadata.issuer, jti: randomUUID(), iat: now, exp: now + 60 },
-        'JWT'
-      )
-      const tokenRes = await fetch(idp.metadata.token_endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          grant_type: 'authorization_code',
-          code,
-          client_id: baseUrl,
-          redirect_uri: `${baseUrl}/oidc/callback`,
-          client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
-          client_assertion: clientAssertion,
-        }),
-      })
-      const tokenBody = (await tokenRes.json()) as { id_token?: string; error_description?: string }
-      if (!tokenRes.ok || !tokenBody.id_token) {
-        throw new Error(`IdP token error: ${tokenBody.error_description ?? tokenRes.status}`)
-      }
-      const { payload: idToken } = await verifyWithJwks(tokenBody.id_token, idp.metadata.jwks, {
-        issuer: idp.metadata.issuer,
-        audience: baseUrl,
-      })
-      if (idToken.nonce !== s.nonce) throw new Error('nonce mismatch')
 
       // 2. Fetch additional attributes from the 属性Provider (also trusted via federation)
       const ap = await resolveEntityMetadata<{ attribute_endpoint: string; jwks: { keys: jose.JWK[] } }>(

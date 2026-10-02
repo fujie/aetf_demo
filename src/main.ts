@@ -24,6 +24,7 @@ import { createAttributeProvider } from './services/attribute-provider.js'
 import { createIdp } from './services/idp.js'
 import { createIncommonSp } from './services/incommon-sp.js'
 import { createIssuer } from './services/issuer.js'
+import { createGakuninSp } from './services/sp.js'
 import { createStatusList } from './services/status-list.js'
 import { createTrustList } from './services/trust-list.js'
 import { createVerifier } from './services/verifier.js'
@@ -81,6 +82,7 @@ const main = async () => {
     signingKey: await proto('idp'),
     authorityHints: [ENTITY.nii],
     anchors,
+    homeFederation: ENTITY.nii,
   })
   const ap = createAttributeProvider({
     entityId: ENTITY.attributeProvider,
@@ -125,6 +127,15 @@ const main = async () => {
     apiKey: STATUS_LIST_API_KEY,
   })
 
+  const gakuninSp = createGakuninSp({
+    entityId: ENTITY.gakuninSp,
+    federationKey: await fed('gakunin-sp'),
+    rpKey: await proto('gakunin-sp-rp'),
+    authorityHints: [ENTITY.nii],
+    anchors,
+    idpEntityId: ENTITY.idp,
+  })
+
   // ---- I2 leaf -------------------------------------------------------------------------------
   const incommonSp = createIncommonSp({
     entityId: ENTITY.incommonSp,
@@ -132,7 +143,9 @@ const main = async () => {
     rpKey: await proto('incommon-sp-rp'),
     authorityHints: [ENTITY.i2],
     anchors,
+    idpEntityId: ENTITY.idp,
     knownEntities: [
+      ENTITY.gakuninSp,
       ENTITY.issuer,
       ENTITY.idp,
       ENTITY.attributeProvider,
@@ -167,6 +180,7 @@ const main = async () => {
   }
   enroll(nii.entity, idp.entity, gakuninPolicy)
   enroll(nii.entity, ap.entity, gakuninPolicy)
+  enroll(nii.entity, gakuninSp.entity, gakuninPolicy)
   enroll(nii.entity, issuer.entity, {
     ...gakuninPolicy,
     openid_credential_issuer: { credential_configurations_supported: { essential: true } },
@@ -201,6 +215,7 @@ const main = async () => {
     ['statusList', 'Status List', statusList.app],
     ['verifier', 'Verifier', verifier.app],
     ['incommonSp', 'InCommon SP', incommonSp.app],
+    ['gakuninSp', '学認SP (通常のSP)', gakuninSp.app],
   ]
   await Promise.all(
     apps.map(

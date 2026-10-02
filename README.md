@@ -7,7 +7,7 @@
 - Holder (Wallet Instance): vcknots の Go ウォレットライブラリ `github.com/trustknots/vcknots/wallet`
 - OpenID Federation (Entity Configuration / Subordinate Statement / Trust Chain 解決 / metadata_policy)、Wallet Attestation、Trust List (ETSI TS 119 602 LoTE + ETSI TS 119 411-8 アクセス証明書)、Token Status List は本リポジトリで実装
 
-通常の学認SPは対象外です (InCommon SP はフェデレーション間の信頼チェーン確認用のスタブ)。
+通常の学認SP (電子ジャーナルを想定) と InCommon SP も、学認の機関IdPでログインできる RP として実装しています。
 
 ## デモ (ブラウザで操作)
 
@@ -26,6 +26,8 @@ npm run demo        # 全エンティティ + Web Wallet (Go) を起動。Go 1.2
 | --- | --- | --- |
 | デモコンソール | <http://localhost:8790> | 図と同じ構成図 (クリックで各画面へ・稼働状態表示)、手順ガイド、全エンティティの処理がリアルタイムに流れるタイムライン |
 | Web Wallet | <http://localhost:8760> | スマートフォン風のウォレット。登録、受け取り (Issuer の信頼チェーン確認)、提示 (Verifier 認証と開示する属性の選択)、カードごとの状態 (VALID / SUSPENDED / INVALID) |
+| 学認SP (通常のSP) | <http://localhost:8725> | 機関IdP でログインし、受け取った属性 (所属種別) でアクセス制御 |
+| InCommon SP | <http://localhost:8750> | 学認の機関IdP で eduGAIN 経由ログイン (フェデレーション間連携)、Trust Chain Explorer |
 | 学認Issuer | <http://localhost:8720> | 機関IdP でログイン (`taro` / `hanako`、パスワード `password`)、Credential Offer、管理画面 (一時停止 / 再開 / 失効) |
 | Verifier | <http://localhost:8740> | 提示リクエスト作成、検証結果 (Wallet Attestation / VP / Issuer / Status List) |
 | Trust List | <http://localhost:8731> | Registrar (RP の一時停止・取消)、LoTE、Access CA |
@@ -42,7 +44,8 @@ Issuer の Offer 画面と Verifier のリクエスト画面にある **「Web W
 4. Issuer 管理画面で一時停止 / 失効 → 約 10 秒 (Status List の ttl) 後に再提示すると拒否
 5. Trust List で Verifier を一時停止 → ウォレットが Verifier を拒否 (アクセス証明書が CRL で失効)
 6. Wallet Provider で Wallet Instance を一時停止 / 失効 → 約 10 秒後から Issuer・Verifier が Wallet Attestation を拒否 (発行・提示ができなくなる)。「再有効化」で復帰
-7. InCommon SP の Trust Chain Explorer で信頼チェーンを確認
+7. 学認SP と InCommon SP に機関IdPでログイン (InCommon SP には eduGAIN 経由で最小限の属性のみ送信)
+8. InCommon SP の Trust Chain Explorer で信頼チェーンを確認
 
 補足:
 
@@ -83,7 +86,8 @@ Issuer の Offer 画面と Verifier のリクエスト画面にある **「Web W
 | Status List | `http://localhost:8732` | `src/services/status-list.ts` | [Token Status List (draft-ietf-oauth-status-list)](https://datatracker.ietf.org/doc/draft-ietf-oauth-status-list/) の Status Issuer / Status Provider |
 | Verifiers | `http://localhost:8740` | `src/services/verifier.ts` | vcknots VerifierFlow (OID4VP, x509_san_dns + JAR)。起動時に Registrar へ登録し、アクセス証明書 (WRPAC) を Request Object の `x5c` に使用 |
 | Wallet Instance | `http://localhost:8760` (Web) / CLI | `wallet-instance/` (Go) | vcknots Go ウォレット + Wallet Attestation / Federation / Trust List 検証 |
-| InCommon SP | `http://localhost:8750` | `src/services/incommon-sp.ts` | I2 配下の RP。Trust Chain Explorer として任意のエンティティの信頼チェーンを表示 |
+| 通常のSP (学認SP) | `http://localhost:8725` | `src/services/sp.ts` | NII 配下の RP (電子ジャーナルを想定)。機関IdP に事前登録せず Federation の自動登録でログイン |
+| InCommon SP | `http://localhost:8750` | `src/services/incommon-sp.ts` | I2 配下の RP。学認の機関IdP で eduGAIN 経由ログイン (フェデレーション間連携) と Trust Chain Explorer |
 
 OpenID Federation 部分は `src/federation/` (TypeScript) と `wallet-instance/federation.go` (Go) にあります。
 
@@ -98,6 +102,7 @@ OpenID Federation 部分は `src/federation/` (TypeScript) と `wallet-instance/
 | その際、Trust List の正当性を OpenID Federation で検証する | Trust List 提供者 (LoTE Scheme Operator) の Trust Chain を解決し、LoTE の所在 (`lote_locations`) と署名鍵 (`jwks`) を取得。LoTE の JAdES 署名の `x5c` 証明書の鍵がこの鍵と一致することを確認して検証 |
 | Verifier は Credential の失効確認を Status List へ照会して行う | Issuer は発行時に Status List から index を割り当て、SD-JWT VC の (非選択開示の) `status.status_list` (`idx`, `uri`) に埋め込む。Verifier は draft の Validation Rules に従って Status List Token を取得・検証し、VALID / INVALID / SUSPENDED を判定 ([下記](#token-status-list-draft-ietf-oauth-status-list)) |
 | その際、Status List の正当性を OpenID Federation で検証する | Status List Token の `iss` (Status Issuer) の Trust Chain を解決し、`status_list_provider.jwks` で署名検証 (draft の Key Resolution and Trust Management を本エコシステム向けに規定) |
+| 学認SP / InCommon SP のログイン | RP 共通部品 (`src/common/oidc-rp.ts`): OP を Trust Chain で確認し、private_key_jwt でトークン取得。機関IdP は RP の Trust Chain を解決して受け入れ (自動登録)、その経路で属性リリースを決定: NII 経由 (学認) は全属性、eduGAIN 経由の他フェデレーション (InCommon) は R&S 相当の最小属性 |
 | 学認IdP / 学認SP としての構成 | 学認Issuer は `openid_relying_party` メタデータを持つ学認SPとして NII 配下に登録。機関IdP・属性Provider は Issuer を、Issuer は IdP・属性Provider を、それぞれ Trust Chain で相互に確認 |
 | (追加) Wallet が Issuer を信頼する | Credential Offer の `credential_issuer` の Trust Chain を解決し、`openid_credential_issuer` として登録されていることを確認 |
 | (追加) Verifier が Issuer を信頼する | SD-JWT VC の `iss` の Trust Chain を解決し、フェデレーションメタデータ (`openid_credential_issuer.jwks`) の鍵でも署名を検証 |

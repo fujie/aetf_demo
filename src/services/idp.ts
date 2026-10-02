@@ -46,7 +46,18 @@ type AuthzRequest = {
   scope: string
   trustChainPath: string[]
   clientName?: string
+  release: AttributeRelease
 }
+
+/**
+ * Attribute release policy decided from the RP's Trust Chain:
+ *  - RPs of the home federation (学認: chain through NII) get the full attribute set
+ *  - RPs of other federations reached through eduGAIN (e.g. InCommon) get a minimal,
+ *    Research & Scholarship-like set (inter-federation)
+ */
+type AttributeRelease = { policy: string; claims: string[] }
+const FULL_RELEASE = ['name', 'family_name', 'given_name', 'email', 'eduPersonPrincipalName', 'eduPersonAffiliation', 'organization']
+const INTERFEDERATION_RELEASE = ['name', 'email', 'eduPersonPrincipalName', 'eduPersonAffiliation', 'organization']
 
 /**
  * 機関IdP: a minimal OpenID Provider. Relying Parties (e.g. the 学認Issuer configured as a 学認SP)
@@ -60,7 +71,13 @@ export const createIdp = (opts: {
   signingKey: SigningKey
   authorityHints: string[]
   anchors: TrustAnchorConfig[]
+  /** Intermediate Authority of the IdP's own federation (学認 = NII). */
+  homeFederation: string
 }) => {
+  const releaseFor = (path: string[]): AttributeRelease =>
+    path.includes(opts.homeFederation)
+      ? { policy: '学認 (同一フェデレーション) — 全属性', claims: FULL_RELEASE }
+      : { policy: 'eduGAIN 経由の他フェデレーション — R&S 相当の最小属性', claims: INTERFEDERATION_RELEASE }
   const { entityId } = opts
   const entity = createFederationEntity({
     entityId,
@@ -141,13 +158,16 @@ export const createIdp = (opts: {
       scope: q.scope ?? 'openid',
       trustChainPath: rp.chain.path,
       clientName: rp.metadata.client_name,
+      release: releaseFor(rp.chain.path),
     })
+    const release = releaseFor(rp.chain.path)
     return c.html(
       page(
         '機関IdP ログイン',
         `<section>
           <p><b>${esc(rp.metadata.client_name ?? clientId)}</b> がログインを要求しています。</p>
           <p class="mut">OpenID Federation で RP を確認しました: ${trustChainHtml(rp.chain.path)}</p>
+          <p>送信する属性 (${esc(release.policy)}):<br>${release.claims.map((x) => `<code>${esc(x)}</code>`).join(' ')}</p>
           <form method="post" action="/login">
             <input type="hidden" name="txn" value="${txn}">
             <p>ユーザー名 <input name="username" value="taro"></p>
@@ -214,11 +234,11 @@ export const createIdp = (opts: {
         iat: now,
         exp: now + 300,
         ...(code.nonce ? { nonce: code.nonce } : {}),
-        ...user.claims,
+        ...Object.fromEntries(Object.entries(user.claims).filter(([k]) => code.release.claims.includes(k))),
       },
       'JWT'
     )
-    emit('機関IdP', 'ok', `ID Token を発行 (${code.clientId})`, '署名鍵は Federation メタデータ openid_provider.jwks')
+    emit('機関IdP', 'ok', `ID Token を発行 (${code.clientName ?? code.clientId})`, `属性リリース: ${code.release.policy} [${code.release.claims.join(', ')}] / RP: ${code.trustChainPath.join(' → ')}`)
     return c.json({ access_token: randomUUID(), token_type: 'Bearer', id_token: idToken })
   })
 

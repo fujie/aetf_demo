@@ -27,14 +27,14 @@ const boxes = (): Box[] => [
   { key: 'i2', label: 'Intermediate', sub: 'Authority (I2)', url: ENTITY.i2, x: 1060, y: 28 },
   { key: 'idp', label: '機関IdP', url: ENTITY.idp, x: 130, y: 178, doc: 'metadata' },
   { key: 'attributeProvider', label: '属性Provider', url: ENTITY.attributeProvider, x: 130, y: 322, doc: 'metadata' },
-  { key: 'normalSp', label: '通常のSP', sub: '(未実装)', x: 610, y: 178, disabled: true },
+  { key: 'gakuninSp', label: '通常のSP', sub: '電子ジャーナル', url: ENTITY.gakuninSp, x: 610, y: 178, doc: 'metadata' },
   { key: 'issuer', label: '学認Issuer', url: ENTITY.issuer, x: 610, y: 322, doc: 'metadata' },
   { key: 'walletProvider', label: 'Wallet Provider', url: ENTITY.walletProvider, x: 610, y: 478, doc: 'metadata' },
   { key: 'trustList', label: 'Trust List', sub: 'ETSI TS 119 602', url: ENTITY.trustList, x: 610, y: 622, doc: 'metadata' },
   { key: 'statusList', label: 'Status List', sub: 'Token Status List', url: ENTITY.statusList, x: 610, y: 766, doc: 'metadata' },
   { key: 'wallet', label: 'Wallet Instance', sub: 'Web Wallet', url: WALLET_UI_URL, x: 965, y: 478, doc: 'Attestation' },
   { key: 'verifier', label: 'Verifiers', url: ENTITY.verifier, x: 965, y: 622 },
-  { key: 'incommonSp', label: 'InCommon SP', sub: 'Trust Chain Explorer', url: ENTITY.incommonSp, x: 1060, y: 178, doc: 'metadata' },
+  { key: 'incommonSp', label: 'InCommon SP', sub: '学認IdPでログイン可', url: ENTITY.incommonSp, x: 1060, y: 178, doc: 'metadata' },
 ]
 
 const healthUrl = (key: string, url: string) => (key === 'wallet' ? `${url}/api/summary` : `${url}/`)
@@ -50,7 +50,7 @@ const diagramSvg = () => {
     line(b.i2.x, 71, b.trustAnchor.x + W + 4, 71),
     line(cx('idp'), b.idp.y, nb.x - 6, nb.y + 4),
     line(b.attributeProvider.x + W, b.attributeProvider.y + H / 2, nb.x - 4, nb.y + 4),
-    line(cx('normalSp'), b.normalSp.y, nb.x + 6, nb.y + 4),
+    line(cx('gakuninSp'), b.gakuninSp.y, nb.x + 6, nb.y + 4),
     line(b.issuer.x, b.issuer.y + H / 2, nb.x, nb.y + 4),
     line(b.walletProvider.x, b.walletProvider.y + H / 2, nb.x - 2, nb.y + 4),
     line(b.trustList.x, b.trustList.y + H / 2, nb.x - 2, nb.y + 4),
@@ -124,6 +124,11 @@ const scenario = () => {
       b: [btn(ENTITY.walletProvider, 'Wallet Provider を開く')],
     },
     {
+      t: '学認SP / InCommon SP に機関IdPでログインする',
+      d: '通常の学認SP (NII 配下) と InCommon SP (I2 配下) で「学認の機関IdPでログイン」。どちらも機関IdPに事前登録されておらず、IdP は SP の Trust Chain を解決して受け入れます (InCommon SP は eduGAIN 経由のフェデレーション間連携)。IdP は Trust Chain に応じて属性リリースを変え、学認SP には全属性、InCommon SP には最小限の属性を送ります。',
+      b: [btn(ENTITY.gakuninSp, '学認SP を開く'), btn(ENTITY.incommonSp, 'InCommon SP を開く')],
+    },
+    {
       t: '信頼チェーンを調べる',
       d: 'I2 (InCommon) 配下の InCommon SP から、学認側エンティティの Trust Chain・metadata_policy 適用後のメタデータを確認できます (eduGAIN 経由のフェデレーション間信頼)。',
       b: [btn(ENTITY.incommonSp, 'Trust Chain Explorer')],
@@ -187,7 +192,7 @@ ol.sc{list-style:none;margin:0;padding:0}ol.sc li{display:flex;gap:12px;padding:
  </div>
 </div>
 <script>
-const colors = {'Wallet Instance':'#8250df','学認Issuer':'#155e86','Verifier':'#bf3989','機関IdP':'#1a7f37','属性Provider':'#2da44e','Wallet Provider':'#9a6700','Trust List':'#cf222e','Status List':'#0969da'}
+const colors = {'学認SP':'#116329','InCommon SP':'#953800','Wallet Instance':'#8250df','学認Issuer':'#155e86','Verifier':'#bf3989','機関IdP':'#1a7f37','属性Provider':'#2da44e','Wallet Provider':'#9a6700','Trust List':'#cf222e','Status List':'#0969da'}
 let last = 0; const seen = new Set()
 const list = document.getElementById('events'), filter = document.getElementById('filter')
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))

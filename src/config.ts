@@ -19,6 +19,7 @@ export const PORTS = {
   idp: BASE_PORT + 10, // 機関IdP
   attributeProvider: BASE_PORT + 11, // 属性Provider
   issuer: BASE_PORT + 20, // 学認Issuer
+  gakuninSp: BASE_PORT + 25, // 通常の学認SP
   walletProvider: BASE_PORT + 30, // Wallet Provider
   trustList: BASE_PORT + 31, // Trust List (Registrar / Access CA / LoTE)
   statusList: BASE_PORT + 32, // Status List
