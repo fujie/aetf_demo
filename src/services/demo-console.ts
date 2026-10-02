@@ -134,8 +134,8 @@ const scenario = () => {
     },
     {
       t: '信頼チェーンを調べる',
-      d: '信頼検証マップで「どのエンティティがどのエンティティを、どの方法 (Federation / Trust List / Wallet Attestation) で検証しているか」を一覧できます。Trust Chain Visualizer では、任意のエンティティについて Entity Configuration / Subordinate Statement の取得と署名検証の流れ、Trust Chain 配列、metadata_policy の適用結果を図で確認できます。InCommon SP の Explorer では I2 (InCommon) 側から見た学認エンティティの解決 (eduGAIN 経由のフェデレーション間信頼) を確認できます。Verifier はフェデレーション外なので解決に失敗する例になります。',
-      b: [btn('/trust-map', '信頼検証マップ'), btn('/trust-chain', 'Trust Chain Visualizer'), btn(ENTITY.incommonSp, 'InCommon SP Explorer')],
+      d: '信頼検証マップで「どのエンティティがどのエンティティを、どの方法 (Federation / Trust List / Wallet Attestation) で検証しているか」を一覧できます。Trust Chain Visualizer では、任意のエンティティについて Entity Configuration / Subordinate Statement の取得と署名検証の流れ、Trust Chain 配列、metadata_policy の適用結果を図で確認できます。Verifier はフェデレーション外なので解決に失敗する例になります。',
+      b: [btn('/trust-map', '信頼検証マップ'), btn('/trust-chain', 'Trust Chain Visualizer')],
     },
     {
       t: 'Trust Chain を壊してみる',

@@ -52,7 +52,7 @@ Issuer の Offer 画面と Verifier のリクエスト画面にある **「Web W
 5. Trust List で Verifier を一時停止 → ウォレットが Verifier を拒否 (アクセス証明書が CRL で失効)
 6. Wallet Provider で Wallet Instance を一時停止 / 失効 → 約 10 秒後から Issuer・Verifier が Wallet Attestation を拒否 (発行・提示ができなくなる)。「再有効化」で復帰
 7. 学認SP と InCommon SP に機関IdPでログイン (InCommon SP には eduGAIN 経由で最小限の属性のみ送信)
-8. Trust Chain Visualizer (または InCommon SP の Trust Chain Explorer) で信頼チェーンの解決過程を図で確認
+8. Trust Chain Visualizer で信頼チェーンの解決過程を図で確認
 9. フェデレーション設定で信頼関係を壊し、発行・提示・ログインが拒否されることを確認 (「すべて初期状態に戻す」で復旧)
 
 補足:
