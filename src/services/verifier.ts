@@ -304,7 +304,7 @@ export const createVerifier = async (opts: {
       checks.push({
         name: 'Wallet Attestation',
         ok: true,
-        detail: `${esc(att.walletName ?? '')} <code>${esc(att.clientId)}</code><br>Wallet Provider: ${trustChainHtml(att.trustChainPath)}`,
+        detail: `${esc(att.walletName ?? '')} <code>${esc(att.clientId)}</code><br>Wallet Provider: ${trustChainHtml(att.trustChainPath)}<br>Wallet Instance status: ${esc(att.status.statusName)} (Status List idx ${att.status.idx})`,
       })
     } catch (e) {
       checks.push({ name: 'Wallet Attestation', ok: false, detail: esc((e as Error).message) })

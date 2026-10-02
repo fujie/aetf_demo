@@ -17,20 +17,38 @@ type WalletInstance = {
   registeredAt: string
   revoked: boolean
   attestationsIssued: number
+  /** Token Status List entry referenced from every Wallet Attestation of this instance. */
+  status?: { idx: number; uri: string }
 }
+
+const WALLET_STATUS_LIST_ID = 'wallet-provider-1'
 
 /**
  * Wallet Provider: registers Wallet Instances and issues Wallet Attestations
  * (`oauth-client-attestation+jwt`) bound to the instance key (`cnf.jwk`).
  * Its attestation signing key is published as `wallet_provider.jwks` in its
  * Entity Configuration so that Issuers / Verifiers can validate it via OpenID Federation.
+ * Revocation of a Wallet Instance is published through the Token Status List: every attestation
+ * carries `status.status_list` (as for Wallet Unit Attestations in the EUDI Wallet ecosystem), and
+ * the entry is set to INVALID when the instance is revoked.
  */
 export const createWalletProvider = (opts: {
   entityId: string
   federationKey: SigningKey
   signingKey: SigningKey
   authorityHints: string[]
+  statusListEntityId: string
+  statusListApiKey: string
 }) => {
+  const statusApi = async (path: string, body: unknown) => {
+    const res = await fetch(`${opts.statusListEntityId}/lists/${WALLET_STATUS_LIST_ID}${path}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${opts.statusListApiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    if (!res.ok) throw new Error(`status list API ${path}: ${res.status} ${await res.text()}`)
+    return res.json()
+  }
   const { entityId } = opts
   const walletName = 'GakuNin Prototype Wallet'
   const entity = createFederationEntity({
@@ -57,7 +75,7 @@ export const createWalletProvider = (opts: {
     const rows = [...instances.values()]
       .map(
         (i) => `<tr><td><code>${esc(i.id)}</code></td><td>${esc(i.registeredAt)}</td>
-        <td>${i.attestationsIssued}</td><td>${i.revoked ? '<span class="ng">revoked</span>' : '<span class="ok">active</span>'}</td>
+        <td>${i.attestationsIssued}</td><td>${i.status ? `idx ${i.status.idx}` : ''}</td><td>${i.revoked ? '<span class="ng">revoked</span>' : '<span class="ok">active</span>'}</td>
         <td>${i.revoked ? '' : `<form method="post" action="/wallet-instances/${encodeURIComponent(i.id)}/revoke"><button>失効</button></form>`}</td></tr>`
       )
       .join('')
@@ -65,7 +83,7 @@ export const createWalletProvider = (opts: {
       page(
         'Wallet Provider',
         `<section><p>Entity ID: <code>${esc(entityId)}</code> / <a href="/.well-known/openid-federation">Entity Configuration</a></p></section>
-        <section><h3>Wallet Instances</h3><table><tr><th>ID</th><th>登録日時</th><th>Attestation発行数</th><th>状態</th><th></th></tr>${rows}</table></section>`
+        <section><h3>Wallet Instances</h3><table><tr><th>ID</th><th>登録日時</th><th>Attestation発行数</th><th>Status List</th><th>状態</th><th></th></tr>${rows}</table></section>`
       )
     )
   })
@@ -81,7 +99,14 @@ export const createWalletProvider = (opts: {
     const existing = [...instances.values()].find((i) => i.thumbprint === thumbprint)
     if (existing) return c.json({ wallet_instance_id: existing.id })
     const id = `${entityId}/instances/${randomUUID()}`
+    let status: WalletInstance['status']
+    try {
+      status = ((await statusApi('/entries', { owner: entityId, label: id })) as { status_list: { idx: number; uri: string } }).status_list
+    } catch (e) {
+      return c.json({ error: 'server_error', error_description: (e as Error).message }, 500)
+    }
     instances.set(id, {
+      status,
       id,
       jwk: body.jwk,
       thumbprint,
@@ -93,11 +118,13 @@ export const createWalletProvider = (opts: {
     return c.json({ wallet_instance_id: id }, 201)
   })
 
-  app.post('/wallet-instances/:id{.+}/revoke', (c) => {
+  app.post('/wallet-instances/:id{.+}/revoke', async (c) => {
     const inst = instances.get(decodeURIComponent(c.req.param('id')))
-    if (inst) {
+    if (inst && !inst.revoked) {
       inst.revoked = true
-      emit('Wallet Provider', 'info', 'Wallet Instance を失効', inst.id)
+      // publish the revocation so that already issued Wallet Attestations are rejected too
+      if (inst.status) await statusApi(`/entries/${inst.status.idx}`, { status: 1 }).catch((e) => console.error(e))
+      emit('Wallet Provider', 'info', 'Wallet Instance を失効', `${inst.id} / Status List idx ${inst.status?.idx} を INVALID に更新 (発行済み Wallet Attestation も無効)`)
     }
     return c.redirect('/', 303)
   })
@@ -129,6 +156,7 @@ export const createWalletProvider = (opts: {
         iat: now,
         exp: now + ATTESTATION_LIFETIME_SEC,
         cnf: { jwk: instance.jwk },
+        ...(instance.status ? { status: { status_list: instance.status } } : {}),
         wallet_name: walletName,
         wallet_link: entityId,
       },

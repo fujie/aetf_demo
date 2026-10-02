@@ -1,6 +1,8 @@
 import * as jose from 'jose'
 import { verifyWithJwks } from './keys.js'
 import { type TrustAnchorConfig, resolveEntityMetadata } from '../federation/resolver.js'
+import { federationStatusListKeyResolver } from '../status-list/federation-key-resolver.js'
+import { StatusType, createStatusListClient } from '../status-list/token-status-list.js'
 
 /**
  * OAuth 2.0 Attestation-Based Client Authentication
@@ -17,6 +19,19 @@ export type VerifiedWalletAttestation = {
   walletName?: string
   trustChainPath: string[]
   holderKey: jose.JWK
+  /** Wallet Instance status from the Token Status List referenced by the attestation. */
+  status: { idx: number; uri: string; statusName: string }
+}
+
+const statusClients = new Map<string, ReturnType<typeof createStatusListClient>>()
+const statusClientFor = (anchors: TrustAnchorConfig[]) => {
+  const key = anchors.map((a) => a.entityId).join(',')
+  let client = statusClients.get(key)
+  if (!client) {
+    client = createStatusListClient(federationStatusListKeyResolver(anchors))
+    statusClients.set(key, client)
+  }
+  return client
 }
 
 const seenJti = new Map<string, number>()
@@ -28,6 +43,8 @@ export class WalletAttestationError extends Error {}
  *  1. Resolve the Wallet Provider (attestation `iss`) via OpenID Federation and require `wallet_provider` metadata
  *  2. Verify the attestation signature with the Wallet Provider key from the resolved metadata
  *  3. Verify the PoP JWT with the instance key in `cnf.jwk` (audience = this server)
+ *  4. Check that the Wallet Instance has not been revoked: the attestation references a Token
+ *     Status List entry (`status.status_list`) that the Wallet Provider sets to INVALID on revocation
  */
 export const verifyWalletAttestation = async (
   attestation: string | undefined,
@@ -97,7 +114,20 @@ export const verifyWalletAttestation = async (
   if (seenJti.has(jtiKey)) throw new WalletAttestationError('PoP jti replayed')
   seenJti.set(jtiKey, now + 10 * 60 * 1000)
 
+  let status: VerifiedWalletAttestation['status']
+  try {
+    const st = await statusClientFor(anchors).check(payload as Record<string, unknown>)
+    status = { idx: st.idx, uri: st.uri, statusName: st.statusName }
+    if (st.status !== StatusType.VALID) {
+      throw new WalletAttestationError(`wallet instance is ${st.statusName} (Status List idx ${st.idx})`)
+    }
+  } catch (e) {
+    if (e instanceof WalletAttestationError) throw e
+    throw new WalletAttestationError(`wallet attestation status check failed: ${(e as Error).message}`)
+  }
+
   return {
+    status,
     clientId: String(payload.sub),
     walletProvider: unverified.iss,
     walletName: (payload.wallet_name as string | undefined) ?? walletProviderMetadata.wallet_name,

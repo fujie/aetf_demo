@@ -525,7 +525,7 @@ export const createIssuer = async (opts: {
         byAccessToken.set(accessToken.access_token, issuance)
       }
       console.log(`[issuer] access token issued to wallet ${attestation.clientId} (WP chain: ${attestation.trustChainPath.join(' -> ')})`)
-      emit('学認Issuer', 'ok', 'Wallet Attestation を検証しアクセストークンを発行', `${attestation.walletName ?? ''} ${attestation.clientId} / Wallet Provider: ${attestation.trustChainPath.join(' → ')}`)
+      emit('学認Issuer', 'ok', 'Wallet Attestation を検証しアクセストークンを発行', `${attestation.walletName ?? ''} ${attestation.clientId} / Wallet Provider: ${attestation.trustChainPath.join(' → ')} / Wallet Instance status: ${attestation.status.statusName}`)
       return c.json(accessToken)
     } catch (e) {
       const { body, status } = toErrorResponse(e)

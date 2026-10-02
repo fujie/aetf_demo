@@ -127,7 +127,13 @@ func (i *Instance) EnsureAttestation() error {
 	if i.state.WalletAttestation != "" {
 		if tok, err := jwt.ParseSigned(i.state.WalletAttestation, []jose.SignatureAlgorithm{jose.ES256}); err == nil {
 			var c jwt.Claims
-			if tok.UnsafeClaimsWithoutVerification(&c) == nil && c.Expiry != nil && c.Expiry.Time().After(time.Now().Add(time.Minute)) {
+			var extra struct {
+				Status map[string]any `json:"status"`
+			}
+			// attestations issued before the Wallet Provider published revocation status (no
+			// `status` claim) are re-fetched, since Issuers / Verifiers require it
+			if tok.UnsafeClaimsWithoutVerification(&c, &extra) == nil && c.Expiry != nil &&
+				c.Expiry.Time().After(time.Now().Add(time.Minute)) && extra.Status != nil {
 				return nil
 			}
 		}

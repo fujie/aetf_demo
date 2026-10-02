@@ -120,7 +120,7 @@ const scenario = () => {
     },
     {
       t: 'Wallet Instance を失効させる',
-      d: 'Wallet Provider で Wallet Instance を「失効」→ ウォレットで「Wallet Attestation を再取得」すると拒否され、以後の発行・提示も Wallet Attestation がないため拒否されます。(新しいウォレットはデータディレクトリを変えて起動)',
+      d: 'Wallet Provider で Wallet Instance を「失効」。Wallet Attestation が参照する Status List のエントリが INVALID になり、約 10 秒 (ttl) 後から Issuer は発行を、Verifier は提示を拒否します (ウォレットが保持している発行済み Attestation も無効)。Attestation の再取得も拒否されます。',
       b: [btn(ENTITY.walletProvider, 'Wallet Provider を開く')],
     },
     {

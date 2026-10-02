@@ -108,6 +108,8 @@ const main = async () => {
     federationKey: await fed('wallet-provider'),
     signingKey: await proto('wallet-provider'),
     authorityHints: [ENTITY.nii],
+    statusListEntityId: ENTITY.statusList,
+    statusListApiKey: STATUS_LIST_API_KEY,
   })
   const trustList = await createTrustList({
     entityId: ENTITY.trustList,
