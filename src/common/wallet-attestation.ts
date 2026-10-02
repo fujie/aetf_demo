@@ -36,6 +36,12 @@ const statusClientFor = (anchors: TrustAnchorConfig[]) => {
 
 const seenJti = new Map<string, number>()
 
+/** Drops cached Status List tokens and replay state (used when the whole demo is reset). */
+export const resetWalletAttestationState = () => {
+  statusClients.clear()
+  seenJti.clear()
+}
+
 export class WalletAttestationError extends Error {}
 
 /**

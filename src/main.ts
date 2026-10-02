@@ -1,9 +1,10 @@
 import 'reflect-metadata'
-import { serve } from '@hono/node-server'
+import { type ServerType, serve } from '@hono/node-server'
 import type { Hono } from 'hono'
-import { spawn, spawnSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
-import { join } from 'node:path'
+import { type ChildProcess, spawn, spawnSync } from 'node:child_process'
+import { existsSync, readdirSync, rmSync } from 'node:fs'
+import type { Server } from 'node:http'
+import { join, resolve } from 'node:path'
 import {
   BASE_PORT,
   CREDENTIAL_CONFIGURATION_ID,
@@ -17,7 +18,9 @@ import {
 } from './config.js'
 import { DATA_DIR, jwksOf, loadOrCreateKey, writeDataFile } from './common/keys.js'
 import type { FederationEntity, MetadataPolicy } from './federation/entity.js'
-import type { TrustAnchorConfig } from './federation/resolver.js'
+import { clearEvents, emit } from './common/events.js'
+import { resetWalletAttestationState } from './common/wallet-attestation.js'
+import { type TrustAnchorConfig, clearTrustChainCache } from './federation/resolver.js'
 import { createAuthority } from './services/authority.js'
 import { createDemoConsole } from './services/demo-console.js'
 import { createFederationSettings } from './services/federation-settings.js'
@@ -31,9 +34,14 @@ import { createTrustList } from './services/trust-list.js'
 import { createVerifier } from './services/verifier.js'
 import { createWalletProvider } from './services/wallet-provider.js'
 
+/** Servers and the web wallet started by the current run (closed by the "reset all" button). */
+let servers: ServerType[] = []
+let walletChild: ChildProcess | undefined
+
 /** Starts a server; exits with a hint when the port is already in use. */
 const listen = (app: Hono, port: number, onListening: () => void) => {
   const server = serve({ fetch: app.fetch, port }, onListening)
+  servers.push(server)
   server.on('error', (err: NodeJS.ErrnoException) => {
     if (err.code === 'EADDRINUSE') {
       console.error(
@@ -47,6 +55,7 @@ const listen = (app: Hono, port: number, onListening: () => void) => {
 }
 
 const main = async () => {
+  servers = []
   // ---- keys ---------------------------------------------------------------------------------
   const fed = async (name: string) => loadOrCreateKey(`${name}-federation`)
   const proto = async (name: string) => loadOrCreateKey(`${name}-protocol`)
@@ -236,6 +245,7 @@ const main = async () => {
       anchors,
       members: [ta, nii, i2, idp, ap, issuer, gakuninSp, walletProvider, trustList, statusList, incommonSp].map((x) => x.entity),
     }),
+    onResetAll: resetAll,
   })
   await new Promise<void>((resolve) => listen(demoConsole.app, DEMO_CONSOLE_PORT, () => resolve()))
   console.log(`  ${'Demo Console'.padEnd(30)} ${DEMO_CONSOLE_URL}`)
@@ -273,10 +283,66 @@ const startWebWallet = () => {
       TRUST_LIST: ENTITY.trustList,
     },
   })
-  const stop = () => child.kill()
-  process.on('exit', stop)
-  process.on('SIGINT', () => process.exit(0))
-  process.on('SIGTERM', () => process.exit(0))
+  walletChild = child
+}
+
+// the web wallet (if any) is stopped together with the servers
+process.on('exit', () => walletChild?.kill())
+process.on('SIGINT', () => process.exit(0))
+process.on('SIGTERM', () => process.exit(0))
+
+/** Removes everything under DATA_DIR (keys, status lists, registrations, wallet data, ...). */
+const clearDataDir = () => {
+  const dir = resolve(DATA_DIR)
+  if (dir === resolve('/') || dir === resolve(process.cwd()) || dir === resolve(process.env.HOME ?? '/')) {
+    throw new Error(`refusing to clear ${dir}`)
+  }
+  if (!existsSync(dir)) return
+  for (const name of readdirSync(dir)) rmSync(join(dir, name), { recursive: true, force: true })
+}
+
+/**
+ * "Reset all" (demo console button): stops the web wallet and every server, deletes .data/ and
+ * starts the whole federation again from scratch in this process — new keys (including the Trust
+ * Anchor's), empty Status Lists / registrations / issuance history, and a fresh web wallet.
+ */
+let resetting = false
+const resetAll = async () => {
+  if (resetting) return
+  resetting = true
+  console.log('\n⟲ Reset all: stopping servers and clearing', DATA_DIR)
+  try {
+    const child = walletChild
+    walletChild = undefined
+    if (child && child.exitCode === null) {
+      await new Promise<void>((done) => {
+        child.once('exit', () => done())
+        child.kill()
+        setTimeout(done, 3000)
+      })
+    }
+    await Promise.all(
+      servers.map(
+        (server) =>
+          new Promise<void>((done) => {
+            server.close(() => done())
+            ;(server as Server).closeAllConnections?.()
+          })
+      )
+    )
+    servers = []
+    clearTrustChainCache()
+    resetWalletAttestationState()
+    clearDataDir()
+    clearEvents()
+    await main()
+    emit('デモコンソール', 'info', '全てを初期状態に戻しました', '.data/ を削除し、新しい鍵で全エンティティを起動し直しました')
+  } catch (e) {
+    console.error('reset failed', e)
+    process.exit(1)
+  } finally {
+    resetting = false
+  }
 }
 
 main().catch((e) => {

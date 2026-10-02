@@ -186,8 +186,10 @@ ol.sc{list-style:none;margin:0;padding:0}ol.sc li{display:flex;gap:12px;padding:
 .lv-ok{color:var(--ok)}.lv-error{color:var(--ng)}.lv-info{color:var(--fg)}
 .ev-d{color:var(--mut);font-size:12px;word-break:break-all;margin-left:2px}
 .empty{color:var(--mut);font-size:13px}
+header .hn{margin-left:auto;display:flex;gap:14px;align-items:center;flex-wrap:wrap}header .hn a{color:#fff;font-size:13px;white-space:nowrap}
+header .reset{background:#fff;color:#cf222e;border:0;border-radius:6px;padding:5px 10px;font-size:13px;font-weight:700;cursor:pointer}
 </style></head><body>
-<header><h1>学認 IHV プロトタイプ デモコンソール</h1><span class="mut">OpenID Federation × vcknots (OID4VCI / OID4VP) × ETSI TS 119 602 × Token Status List</span><a href="/federation" target="_blank" style="color:#fff;margin-left:auto;font-size:14px">⚙ フェデレーション設定</a><a href="/trust-map" target="_blank" style="color:#fff;font-size:14px">🧭 信頼検証マップ</a><a href="/trust-chain" target="_blank" style="color:#fff;font-size:14px">🔗 Trust Chain Visualizer</a></header>
+<header><h1>学認 IHV プロトタイプ デモコンソール</h1><span class="mut">OpenID Federation × vcknots (OID4VCI / OID4VP) × ETSI TS 119 602 × Token Status List</span><nav class="hn"><a href="/federation" target="_blank">⚙ フェデレーション設定</a><a href="/trust-map" target="_blank">🧭 信頼検証マップ</a><a href="/trust-chain" target="_blank">🔗 Trust Chain Visualizer</a><form method="post" action="/reset-all" style="margin:0" onsubmit="return confirm('.data/ の内容 (全ての鍵・Status List・登録情報・発行履歴・Web Wallet のデータ) を削除し、全てを初期状態に戻します。よろしいですか？')"><button class="reset">⟲ 全て初期化</button></form></nav></header>
 <div class="wrap">
  <div>
   <div class="panel"><h2>構成 (クリックで各エンティティの画面を開きます / ●は稼働状態)</h2>${diagramSvg()}</div>
@@ -201,7 +203,7 @@ ol.sc{list-style:none;margin:0;padding:0}ol.sc li{display:flex;gap:12px;padding:
  </div>
 </div>
 <script>
-const colors = {'学認SP':'#116329','InCommon SP':'#953800','Wallet Instance':'#8250df','学認Issuer':'#155e86','Verifier':'#bf3989','機関IdP':'#1a7f37','属性Provider':'#2da44e','Wallet Provider':'#9a6700','Trust List':'#cf222e','Status List':'#0969da','Federation 設定':'#6e7781'}
+const colors = {'学認SP':'#116329','InCommon SP':'#953800','Wallet Instance':'#8250df','学認Issuer':'#155e86','Verifier':'#bf3989','機関IdP':'#1a7f37','属性Provider':'#2da44e','Wallet Provider':'#9a6700','Trust List':'#cf222e','Status List':'#0969da','Federation 設定':'#6e7781','デモコンソール':'#24292f'}
 let last = 0; const seen = new Set()
 const list = document.getElementById('events'), filter = document.getElementById('filter')
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))
@@ -232,8 +234,37 @@ poll(); health()
 export const createDemoConsole = (opts: {
   anchors: TrustAnchorConfig[]
   federationSettings: ReturnType<typeof createFederationSettings>
+  /** Deletes .data/ and restarts every entity (closes this console too). */
+  onResetAll: () => Promise<void>
 }) => {
   const app = new Hono()
+  let resetting = false
+  /** Reset all: answer first (this server is closed and recreated by the reset), then reset. */
+  app.post('/reset-all', (c) => {
+    if (!resetting) {
+      resetting = true
+      setTimeout(() => void opts.onResetAll(), 200)
+    }
+    return c.html(
+      page(
+        '初期化中',
+        `<section><h3>全てを初期状態に戻しています…</h3>
+        <p><code>.data/</code> を削除し、新しい鍵で全エンティティと Web Wallet を起動し直しています。完了するとデモコンソールに戻ります。</p>
+        <p class="mut" id="st">停止中…</p></section>
+        <script>
+        const st = document.getElementById('st'); let n = 0
+        async function wait() {
+          n++
+          try { const r = await fetch('/api/ready', { cache: 'no-store' }); if (r.ok) { st.textContent = '起動しました'; location.href = '/'; return } } catch {}
+          st.textContent = '起動中… (' + n + ' 秒)'; setTimeout(wait, 1000)
+        }
+        setTimeout(wait, 1500)
+        </script>`
+      )
+    )
+  })
+  /** 503 while this (old) console instance is being reset; the new instance answers 200. */
+  app.get('/api/ready', (c) => (resetting ? c.json({ ready: false }, 503) : c.json({ ready: true })))
   opts.federationSettings.mount(app, (c, body) => c.html(page('フェデレーション設定', body)))
   app.use('/api/*', cors({ origin: '*' }))
   app.get('/', (c) => c.html(pageHtml()))
