@@ -5,7 +5,7 @@
 
 - Issuer / Verifier: [vcknots](https://github.com/trustknots/vcknots) の TypeScript ライブラリ `@trustknots/vcknots` (OID4VCI / OID4VP, SD-JWT VC)
 - Holder (Wallet Instance): vcknots の Go ウォレットライブラリ `github.com/trustknots/vcknots/wallet`
-- OpenID Federation (Entity Configuration / Subordinate Statement / Trust Chain 解決 / metadata_policy)、Wallet Attestation、Trust List、Token Status List は本リポジトリで実装
+- OpenID Federation (Entity Configuration / Subordinate Statement / Trust Chain 解決 / metadata_policy)、Wallet Attestation、Trust List (ETSI TS 119 602 LoTE + ETSI TS 119 411-8 アクセス証明書)、Token Status List は本リポジトリで実装
 
 通常の学認SPは対象外です (InCommon SP はフェデレーション間の信頼チェーン確認用のスタブ)。
 
@@ -34,9 +34,9 @@
 | 属性Provider | `http://localhost:7011` | `src/services/attribute-provider.ts` | 学籍番号・学部などの追加属性を返す。要求者を Trust Chain で検証し、応答に署名 |
 | 学認Issuer (学認SPとして構成) | `http://localhost:7020` | `src/services/issuer.ts` | vcknots IssuerFlow / AuthzFlow。機関IdP でログイン → 属性Provider → SD-JWT VC を発行 |
 | Wallet Provider | `http://localhost:7030` | `src/services/wallet-provider.ts` | Wallet Instance 登録と Wallet Attestation (`oauth-client-attestation+jwt`) 発行 |
-| Trust List | `http://localhost:7031` | `src/services/trust-list.ts` | Verifier の登録簿。署名付きリスト (`trust-list+jwt`) を配布 |
+| Trust List | `http://localhost:7031` | `src/services/trust-list.ts`, `src/trust-list/` | EUDI モデルの Registrar + Access CA (WRPAC Provider) + LoTE Provider。WRPAC Providers の [ETSI TS 119 602 LoTE](#trust-list-etsi-ts-119-602--ts-119-411-8) を配布 |
 | Status List | `http://localhost:7032` | `src/services/status-list.ts` | [Token Status List (draft-ietf-oauth-status-list)](https://datatracker.ietf.org/doc/draft-ietf-oauth-status-list/) の Status Issuer / Status Provider |
-| Verifiers | `http://localhost:7040` | `src/services/verifier.ts` | vcknots VerifierFlow (OID4VP, x509_san_dns + JAR)。起動時に Trust List へ登録 |
+| Verifiers | `http://localhost:7040` | `src/services/verifier.ts` | vcknots VerifierFlow (OID4VP, x509_san_dns + JAR)。起動時に Registrar へ登録し、アクセス証明書 (WRPAC) を Request Object の `x5c` に使用 |
 | Wallet Instance | (CLI) | `wallet-instance/` (Go) | vcknots Go ウォレット + Wallet Attestation / Federation / Trust List 検証 |
 | InCommon SP | `http://localhost:7050` | `src/services/incommon-sp.ts` | I2 配下の RP。Trust Chain Explorer として任意のエンティティの信頼チェーンを表示 |
 
@@ -48,8 +48,8 @@ OpenID Federation 部分は `src/federation/` (TypeScript) と `wallet-instance/
 | --- | --- |
 | Issuer/Verifier が Wallet を信頼するために、Wallet Instance が提示する Wallet Attestation を Wallet Provider の公開鍵で検証する | Wallet Instance は OID4VCI の token request と OID4VP の direct_post に `OAuth-Client-Attestation` / `OAuth-Client-Attestation-PoP` ヘッダ (draft-ietf-oauth-attestation-based-client-auth) を付与。Issuer の `/token` と Verifier の `/callback` で検証 (`src/common/wallet-attestation.ts`) |
 | その際、Wallet Provider の正当性を OpenID Federation で検証する (Wallet Provider は複数存在してもよい) | Attestation の `iss` から Trust Chain を解決し、`wallet_provider` メタデータの `jwks` で署名検証。Wallet Provider を固定せず、Trust Anchor に繋がる任意の Wallet Provider を受け入れる |
-| Wallet が Verifier を信頼するために Trust List を照会する | Wallet Instance は `client_id` を Trust List で検索し、登録された証明書を **vcknots の `X509TrustChainRoots`** に渡して Request Object (x5c) を検証 (`wallet-instance/trustlist.go`) |
-| その際、Trust List の正当性を OpenID Federation で検証する | Trust List 提供者の Trust Chain を解決し、`trust_list_provider.jwks` で `trust-list+jwt` の署名を検証 |
+| Wallet が Verifier を信頼するために Trust List を照会する | EUDI ARF 6.6.3.2 に従い、Wallet は WRPAC Providers LoTE (ETSI TS 119 602) から Access CA のトラストアンカーを取得し、Verifier が Request Object の `x5c` に入れたアクセス証明書 (ETSI TS 119 411-8) をプロファイル検査・パス検証。トラストアンカーは **vcknots の `X509TrustChainRoots`** に渡し、署名・パス・CRL による失効確認も vcknots が実施 (`wallet-instance/trustlist.go`) |
+| その際、Trust List の正当性を OpenID Federation で検証する | Trust List 提供者 (LoTE Scheme Operator) の Trust Chain を解決し、LoTE の所在 (`lote_locations`) と署名鍵 (`jwks`) を取得。LoTE の JAdES 署名の `x5c` 証明書の鍵がこの鍵と一致することを確認して検証 |
 | Verifier は Credential の失効確認を Status List へ照会して行う | Issuer は発行時に Status List から index を割り当て、SD-JWT VC の (非選択開示の) `status.status_list` (`idx`, `uri`) に埋め込む。Verifier は draft の Validation Rules に従って Status List Token を取得・検証し、VALID / INVALID / SUSPENDED を判定 ([下記](#token-status-list-draft-ietf-oauth-status-list)) |
 | その際、Status List の正当性を OpenID Federation で検証する | Status List Token の `iss` (Status Issuer) の Trust Chain を解決し、`status_list_provider.jwks` で署名検証 (draft の Key Resolution and Trust Management を本エコシステム向けに規定) |
 | 学認IdP / 学認SP としての構成 | 学認Issuer は `openid_relying_party` メタデータを持つ学認SPとして NII 配下に登録。機関IdP・属性Provider は Issuer を、Issuer は IdP・属性Provider を、それぞれ Trust Chain で相互に確認 |
@@ -62,6 +62,35 @@ OpenID Federation 部分は `src/federation/` (TypeScript) と `wallet-instance/
   (機関IdP は `RS256` も宣言しているが、解決後メタデータからは除去される。InCommon SP の Explorer で確認可能)
 - NII → 各リーフ: `federation_entity.contacts` に `add`、Issuer には `credential_configurations_supported` を `essential`、
   Wallet Provider には `attestation_signing_alg_values_supported` を `subset_of [ES256]`
+
+## Trust List (ETSI TS 119 602 / TS 119 411-8)
+
+Trust List は EUDI Wallet エコシステムの Relying Party 信頼モデル
+([ARF](https://github.com/eu-digital-identity-wallet/eudi-doc-architecture-and-reference-framework) 3.5 / 6.4 / 6.6.3.2、
+[EUDI ETSI 119 6x2 ライブラリ](https://github.com/eu-digital-identity-wallet/eudi-lib-kmp-etsi-1196x2)) に合わせています。
+(docs.eudi.dev と spruceid.com はこの環境からアクセスできなかったため、同じ内容の一次資料である ARF と EUDI 参照実装を参照しました。)
+
+```
+ Verifier ──(1) 登録 (PoP 付き)──▶ Registrar ──▶ Access CA ──(2) アクセス証明書 (WRPAC) 発行
+                                                     │ CRL
+ LoTE Provider ──(3) WRPAC Providers LoTE (ETSI TS 119 602, JAdES 署名) に Access CA 証明書を掲載
+ Wallet ──(4) OpenID Federation で LoTE 署名者を確認 → LoTE 検証 → トラストアンカー取得
+        ──(5) Request Object の x5c (WRPAC) をトラストアンカーまでパス検証 + CRL 確認 (vcknots)
+```
+
+| 要素 | 標準 | 実装 |
+| --- | --- | --- |
+| List of Trusted Entities | ETSI TS 119 602 (JSON) | `LoTE` / `ListAndSchemeInformation` / `TrustedEntitiesList` を ETSI の JSON スキーマ通りに生成 (`src/trust-list/etsi119602.ts`)。LoTEType は `http://uri.etsi.org/19602/LoTEType/EUWRPACProvidersList`、サービス種別は `…/SvcType/WRPAC/Issuance` (Access CA 証明書) と `…/SvcType/WRPAC/Revocation` (CRL)。`LoTESequenceNumber` は内容変更時に増加、`NextUpdate` は 30 日後、`SchemeTerritory` は `JP` |
+| LoTE の署名 | ETSI TS 119 182-1 (JAdES) | コンパクト JWS、payload `{"LoTE": …}`、保護ヘッダ `alg`=ES256・`x5c`・`x5t#S256`・`sigT` (`crit: ["sigT"]`)、`Content-Type: application/jwt` |
+| アクセス証明書 (WRPAC) | ETSI TS 119 411-8 | 法人向けポリシー NCP-l-eudiwrp (`0.4.0.194118.1.2`)、subject に C / O / organizationIdentifier / CN、SAN に dNSName (`x509_san_dns` の client_id) と連絡先 URI、keyUsage digitalSignature、AKI / SKI、CRL 配布点、AIA caIssuers、正の乱数シリアル |
+| Access CA | RFC 5280 | CA 証明書 (pathLen 0、keyCertSign / cRLSign) と CRL。RP の一時停止は `certificateHold`、登録取消は `cessationOfOperation` で失効 |
+| Registrar | ARF 6.4 | RP 登録 API。要求は認証対象の鍵で署名した JWS (所持証明)。利用目的・要求属性を登録 (登録証明書 WRPRC は未実装)。管理画面から一時停止 / 再開 / 取消 |
+| Wallet 側の検証 | ARF 6.6.3.2 | LoTE: 署名者 (Federation)・JAdES・`LoTEVersionIdentifier`・`LoTEType`・`ListIssueDateTime`/`NextUpdate` を検査し、WRPAC 発行サービスの CA 証明書をトラストアンカーに採用。WRPAC: エンドエンティティ・digitalSignature・WRPAC ポリシー・自己署名でないこと・SAN と client_id の一致・トラストアンカーまでのパス。署名と CRL による失効は vcknots が確認 |
+
+テスト: `npm test` で生成した LoTE を ETSI の JSON スキーマ (`test/fixtures/1960201_json_schema.json`) で検証し、JAdES ヘッダを確認します。
+`go test ./...` で JAdES 検証の不正系 (信頼していない署名者、改ざん、未知の `crit`、`sigT` 欠落) を確認します。
+
+![trust list](docs/images/trust-list.png)
 
 ## Token Status List (draft-ietf-oauth-status-list)
 
@@ -104,7 +133,7 @@ sequenceDiagram
   participant V as Verifier
   participant FED as Federation (eduGAIN/NII)
 
-  V->>TL: Verifier 登録 (client_id, x5c)
+  V->>TL: Registrar に登録 → Access CA がアクセス証明書 (WRPAC) を発行
   WI->>FED: WP の Trust Chain 解決
   WI->>WP: Wallet Instance 登録 / Wallet Attestation 取得
   U->>IS: ログイン
@@ -118,8 +147,10 @@ sequenceDiagram
   IS->>SL: status index 割当
   IS-->>WI: SD-JWT VC (status 付き)
   V-->>WI: openid4vp リクエスト (QR)
-  WI->>FED: Trust List 提供者の Trust Chain 解決
-  WI->>TL: Trust List 取得 / Verifier 確認
+  WI->>FED: LoTE Provider の Trust Chain 解決
+  WI->>TL: WRPAC Providers LoTE 取得 (JAdES 検証)
+  WI->>WI: アクセス証明書 (x5c) を LoTE のトラストアンカーまでパス検証
+  WI->>TL: Access CA の CRL で失効確認 (vcknots)
   WI->>V: vp_token (SD-JWT + KB-JWT) + Wallet Attestation
   V->>FED: WP / Issuer / Status List の Trust Chain 解決
   V->>SL: Status List Token 取得・失効確認
@@ -139,7 +170,7 @@ npm install
 npm start
 ```
 
-すべてのエンティティが 1 プロセスで別ポートに起動し、Verifier は Trust List に自動登録されます。
+すべてのエンティティが 1 プロセスで別ポートに起動し、Verifier は Registrar に自動登録されてアクセス証明書を受け取ります。
 鍵は `.data/keys/` に保存され再起動後も同じ Entity 鍵が使われます。
 Trust Anchor の設定 (Entity ID と公開鍵) は `.data/trust-anchor.json` に出力され、Wallet Instance はこれを帯域外で設定された Trust Anchor として使います。
 
@@ -177,7 +208,7 @@ go build -o wallet-instance .
 
 - 一時停止 / 再開 / 失効: <http://localhost:7020/admin> で「一時停止 (SUSPENDED)」「再開 (VALID)」「失効 (INVALID)」→ 再提示すると Verifier が `SUSPENDED` / `INVALID` で拒否。
   Verifier は Status List Token を `ttl` (既定 10 秒) キャッシュするため、反映まで最大 `ttl` 秒かかります。`./wallet-instance list` でも Holder 側から状態を確認できます
-- Verifier を信頼しない: <http://localhost:7031/> で Verifier を削除 → Wallet が提示を拒否 (Verifier 画面の「Trust List へ登録 / 再登録」で戻せます)
+- Verifier の登録停止: <http://localhost:7031/> で「一時停止」(certificateHold) または「登録取消」(cessationOfOperation) → アクセス証明書が CRL で失効し、Wallet が提示を拒否。「再開」で復帰し、取消後は Verifier 画面の「Registrar へ登録 / 再登録」で新しいアクセス証明書が発行されます
 - Wallet Attestation なし: `curl -X POST http://localhost:7020/token -d ...` は `invalid_client`
 - Wallet Instance 失効: <http://localhost:7030/> で失効 → 以後の Attestation 取得が拒否されます (発行済み Attestation は有効期限 1 時間まで有効)
 
@@ -208,16 +239,19 @@ InCommon SP の Trust Chain Explorer (<http://localhost:7050/>) で、各エン�
   vcknots の検証後に、Wallet Attestation・Issuer の Trust Chain・Status List の確認を追加しています。
 - **Wallet**: `wallet.ReceiveCredential` / `wallet.PresentCredential`。
   - vcknots ウォレットは Wallet Attestation 未対応のため、`http.DefaultTransport` をラップして form POST (token request / direct_post) にヘッダを付与しています。
-  - vcknots の Verifier は Request Object を 1 回しか返さないため、Wallet Instance が `request_uri` から一度だけ取得し、`request=` (by value) で vcknots に渡します。署名・x5c の検証は vcknots が Trust List 由来の証明書で行います。
+  - vcknots の Verifier は Request Object を 1 回しか返さないため、Wallet Instance が `request_uri` から一度だけ取得し、`request=` (by value) で vcknots に渡します。署名・x5c のパス検証・CRL 確認は、LoTE 由来のトラストアンカーを使って vcknots が行います。
 
 ## プロトタイプとしての制約
 
 - すべて `http://localhost` (vcknots の debug / `VCKNOTS_WALLET_HTTP_ALLOWED` を有効化)。本番では HTTPS 必須
 - 鍵 (Federation 鍵・各プロトコル鍵・VC 署名鍵・Verifier 証明書) と Status List は `.data/` に永続化。
-  それ以外 (Wallet Instance の登録、発行履歴、Trust List 登録、ログインセッション) はインメモリで、サーバー再起動で消えます
-  (Wallet Instance は未登録エラー時に自動で再登録し、Verifier は起動時に Trust List へ再登録します)
+  Access CA の鍵・証明書・発行履歴、Registrar の登録情報、LoTE のシーケンス番号も `.data/trust-list/` に永続化。
+  それ以外 (Wallet Instance の登録、発行履歴、ログインセッション) はインメモリで、サーバー再起動で消えます
+  (Wallet Instance は未登録エラー時に自動で再登録し、Verifier は起動時に Registrar へ再登録します)
 - Federation: Trust Mark、`constraints`、Resolve endpoint、Historical keys は未実装。metadata_policy は主要オペレーター (value / add / default / one_of / subset_of / superset_of / essential) のみ
-- Entity Type `wallet_provider` / `trust_list_provider` / `status_list_provider` / `attribute_provider` と Trust List の形式 (`trust-list+jwt`) は本プロトタイプ独自
+- Entity Type `wallet_provider` / `trust_list_provider` / `status_list_provider` / `attribute_provider` は本プロトタイプ独自 (LoTE の署名者を OpenID Federation で信頼する点も独自の組合せ。EUDI では Wallet に LoTE 署名者のトラストアンカーを帯域外で設定)
+- LoTE の型・サービス種別 URI は ETSI の EU WRPAC Providers 用のものを流用 (`SchemeTerritory` は `JP`)。Registrar・Access CA・LoTE Provider は本来別主体だが、1 エンティティにまとめています
+- Registrar は RP の本人確認を行わず自動承認。登録証明書 (WRPRC) と「要求属性が登録範囲内か」の Wallet 側検査、OCSP、ETSI TS 119 612 (XML Trusted List / LOTL) は未実装
 - Wallet Provider は鍵アテステーション / アプリ完全性検証を行っていません。Status List の管理 API (Issuer → Status Issuer) は共有シークレットで保護。Status List Token は JWT 形式のみ (CWT 形式は未対応)
 - Verifier 応答への Wallet Attestation 付与は OID4VP 標準の範囲外 (本シナリオ用の拡張)
-- Verifier は Trust List で信頼される前提のため Federation には参加していません。client_id は `x509_san_dns:localhost` (Verifier は 1 つ)
+- Verifier は Trust List (アクセス証明書) で信頼される前提のため Federation には参加していません。client_id は `x509_san_dns:localhost` (Verifier は 1 つ)

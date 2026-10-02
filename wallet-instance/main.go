@@ -191,27 +191,40 @@ func (i *Instance) present(requestURI string, claims []string) error {
 		return fmt.Errorf("client_id missing in authorization request")
 	}
 
-	// 1. Is the Verifier registered in the Trust List (signed by a federation member)?
-	entry, pool, err := i.LookupVerifier(clientID)
+	// 1. Trust anchors of the Access Certificate Authorities from the WRPAC Providers LoTE
+	//    (ETSI TS 119 602), whose signer is trusted via OpenID Federation
+	lote, err := i.LoadWRPACProvidersLoTE()
 	if err != nil {
 		return err
 	}
-	fmt.Printf("✔ Verifier found in Trust List: %s (%s)\n", entry.Name, entry.ClientID)
+	fmt.Printf("✔ WRPAC Providers LoTE verified (ETSI TS 119 602, seq %d, scheme operator %q, signer via %s)\n",
+		lote.SequenceNumber, lote.SchemeOperator, strings.Join(lote.FederationPath, " -> "))
 
 	// 2. Fetch the request object once (the verifier serves it a single time) and hand it to the
-	//    vcknots presenter by value; the presenter verifies its x5c against the Trust List cert.
-	if ru := q.Get("request_uri"); ru != "" {
-		requestObject, err := fetchText(ru)
-		if err != nil {
-			return fmt.Errorf("fetch request object: %w", err)
-		}
-		requestURI = "openid4vp:?" + url.Values{"client_id": {clientID}, "request": {requestObject}}.Encode()
-		if len(claims) == 0 {
-			if claims, err = requestedClaims(requestObject); err != nil {
-				return err
-			}
+	//    vcknots presenter by value.
+	ru := q.Get("request_uri")
+	if ru == "" {
+		return fmt.Errorf("a signed request object (request_uri) carrying the access certificate is required")
+	}
+	requestObject, err := fetchText(ru)
+	if err != nil {
+		return fmt.Errorf("fetch request object: %w", err)
+	}
+	requestURI = "openid4vp:?" + url.Values{"client_id": {clientID}, "request": {requestObject}}.Encode()
+
+	// 3. Relying Party authentication with its access certificate (ETSI TS 119 411-8)
+	rp, err := lote.AuthenticateRelyingParty(requestObject, clientID)
+	if err != nil {
+		return fmt.Errorf("relying party authentication failed: %w", err)
+	}
+	fmt.Printf("✔ Access certificate (WRPAC) chains to a LoTE trust anchor: %s / %s (%s), policy %s, issued by %s (%s)\n",
+		rp.Organization, rp.CommonName, rp.OrganizationIdentifier, rp.Policy, rp.AccessCA, rp.AccessCAEntity)
+	if len(claims) == 0 {
+		if claims, err = requestedClaims(requestObject); err != nil {
+			return err
 		}
 	}
+	pool := lote.Pool()
 	w, err := i.newWallet(&oid4vpRoots{pool: pool})
 	if err != nil {
 		return err
@@ -222,18 +235,22 @@ func (i *Instance) present(requestURI string, claims []string) error {
 	}
 	fmt.Printf("  disclosing: %s\n", strings.Join(claims, ", "))
 
-	// 3. Wallet Attestation is sent along with the direct_post response
+	// 4. Wallet Attestation is sent along with the direct_post response
 	if err := i.EnsureAttestation(); err != nil {
 		return err
 	}
 	installAttestationTransport(i)
 
-	// vcknots verifies the request object x5c against the certificate from the Trust List
+	// vcknots verifies the request object signature, the x5c path to the LoTE trust anchors and
+	// the revocation status of the access certificate (CRL distribution point)
 	redirect, err := w.PresentCredential(requestURI, i.holderKey, &sdjwtvc.SdJwtVcPresentationOptions{
 		SelectedClaims:    claims,
 		RequireKeyBinding: true,
 	})
 	if err != nil {
+		if strings.Contains(err.Error(), "certificate was revoked") {
+			return fmt.Errorf("relying party authentication failed: access certificate is revoked (CRL of the Access CA): %w", err)
+		}
 		return fmt.Errorf("presentation failed: %w", err)
 	}
 	fmt.Println("✔ Presentation accepted by the Verifier")

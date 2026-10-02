@@ -80,7 +80,7 @@ const main = async () => {
     signingKey: await proto('wallet-provider'),
     authorityHints: [ENTITY.nii],
   })
-  const trustList = createTrustList({
+  const trustList = await createTrustList({
     entityId: ENTITY.trustList,
     federationKey: await fed('trust-list'),
     signingKey: await proto('trust-list'),

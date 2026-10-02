@@ -34,7 +34,7 @@ echo "Credential Offer: ${OFFER:0:120}..."
 step "3. Wallet receives the credential (OID4VCI, Wallet Attestation at the token endpoint)"
 "$WALLET" receive "$OFFER"
 
-step "4. Verifier creates a presentation request; Wallet checks the Trust List and presents"
+step "4. Verifier creates a presentation request; Wallet authenticates it via the LoTE + access certificate and presents"
 REQ=$(curl -s -X POST -H 'Accept: application/json' "$VERIFIER/requests")
 "$WALLET" present "$(echo "$REQ" | json '["request_uri"]')"
 echo "Verifier result: $(curl -s -H 'Accept: application/json' "$(echo "$REQ" | json '["result_url"]')" | json '["status"]')"

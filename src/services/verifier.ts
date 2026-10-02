@@ -1,4 +1,4 @@
-import { randomUUID, webcrypto } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { Hono } from 'hono'
@@ -22,6 +22,7 @@ import {
   verifyWalletAttestation,
 } from '../common/wallet-attestation.js'
 import { type TrustAnchorConfig, resolveEntityMetadata, resolveTrustChain } from '../federation/resolver.js'
+import { RP_REGISTRATION_TYP } from './trust-list.js'
 import { federationStatusListKeyResolver } from '../status-list/federation-key-resolver.js'
 import { StatusType, createStatusListClient } from '../status-list/token-status-list.js'
 
@@ -36,36 +37,21 @@ type PresentationResult = {
   disclosed?: Record<string, unknown>
 }
 
-/** Self-signed ES256 certificate for request-object signing (client_id x509_san_dns:<host>). */
-const loadOrCreateCertificate = async (dnsName: string) => {
-  const dir = join(DATA_DIR, 'verifier')
-  const keyPath = join(dir, 'key.pem')
-  const certPath = join(dir, 'cert.pem')
-  if (existsSync(keyPath) && existsSync(certPath)) {
-    return { privateKey: readFileSync(keyPath, 'utf-8'), certificate: readFileSync(certPath, 'utf-8') }
+const REQUESTED_CLAIMS = ['family_name', 'given_name', 'organization', 'enrollment_status']
+
+/** Request-object signing key of the Relying Party Instance (certified by the Access CA). */
+const loadOrCreateKey = async () => {
+  const keyPath = join(DATA_DIR, 'verifier', 'key.pem')
+  let privateKeyPem: string
+  if (existsSync(keyPath)) {
+    privateKeyPem = readFileSync(keyPath, 'utf-8')
+  } else {
+    const { privateKey } = await jose.generateKeyPair('ES256', { extractable: true })
+    privateKeyPem = await jose.exportPKCS8(privateKey)
+    writeDataFile('verifier/key.pem', privateKeyPem)
   }
-  x509.cryptoProvider.set(webcrypto as unknown as Crypto)
-  const alg = { name: 'ECDSA', namedCurve: 'P-256', hash: 'SHA-256' }
-  const keys = await webcrypto.subtle.generateKey(alg, true, ['sign', 'verify'])
-  const cert = await x509.X509CertificateGenerator.createSelfSigned({
-    serialNumber: Date.now().toString(16),
-    name: `CN=${dnsName}, O=Prototype Verifier`,
-    notBefore: new Date(Date.now() - 60_000),
-    notAfter: new Date(Date.now() + 365 * 24 * 3600 * 1000),
-    signingAlgorithm: alg,
-    keys: keys as unknown as CryptoKeyPair,
-    extensions: [
-      new x509.SubjectAlternativeNameExtension([{ type: 'dns', value: dnsName }]),
-      new x509.KeyUsagesExtension(x509.KeyUsageFlags.digitalSignature | x509.KeyUsageFlags.keyCertSign, true),
-      new x509.BasicConstraintsExtension(true, undefined, true),
-    ],
-  })
-  const pkcs8 = await webcrypto.subtle.exportKey('pkcs8', keys.privateKey)
-  const privateKey = `-----BEGIN PRIVATE KEY-----\n${Buffer.from(pkcs8).toString('base64').match(/.{1,64}/g)?.join('\n')}\n-----END PRIVATE KEY-----\n`
-  const certificate = cert.toString('pem')
-  writeDataFile('verifier/key.pem', privateKey)
-  writeDataFile('verifier/cert.pem', certificate)
-  return { privateKey, certificate }
+  const { d: _d, ...publicJwk } = await jose.exportJWK(await jose.importPKCS8(privateKeyPem, 'ES256', { extractable: true }))
+  return { privateKeyPem, signingKey: await jose.importPKCS8(privateKeyPem, 'ES256'), publicJwk }
 }
 
 /** Splits a presented SD-JWT (`<jwt>~<disclosure>~...~<kb-jwt>`) and decodes it. */
@@ -102,43 +88,70 @@ export const createVerifier = async (opts: {
   const clientId = ClientIdentifier(`x509_san_dns:${dnsName}`)
   const verifierId = VerifierClientId(baseUrl)
 
-  const context = initializeContext({ debug: true })
-  const verifierFlow = initializeVerifierFlow(context)
-  const { privateKey, certificate } = await loadOrCreateCertificate(dnsName)
-  await verifierFlow.createVerifierMetadata(
-    verifierId,
-    VerifierMetadata({
-      client_name: opts.name,
-      vp_formats_supported: {
-        'dc+sd-jwt': { 'sd-jwt_alg_values': ['ES256'], 'kb-jwt_alg_values': ['ES256'] },
-      },
-    }),
-    { privateKey, certificate, format: 'pem', alg: 'ES256' }
-  )
+  const rpKey = await loadOrCreateKey()
+  let verifierFlow: ReturnType<typeof initializeVerifierFlow> | undefined
+  let accessCertificate: x509.X509Certificate | undefined
+  const flow = () => {
+    if (!verifierFlow) throw new Error('not registered at the Registrar yet (no access certificate)')
+    return verifierFlow
+  }
 
   const results = new Map<string, PresentationResult>() // by state
   const statusListClient = createStatusListClient(federationStatusListKeyResolver(opts.anchors))
 
-  /** Registration to the Trust List (red "Registration" arrow in the diagram). */
+  /**
+   * Registration at the Registrar (red "Registration" arrow): obtains a Wallet-Relying Party Access
+   * Certificate (ETSI TS 119 411-8) from the Access CA and (re)initialises vcknots with it, so that
+   * request objects carry it in `x5c`.
+   */
   const registerToTrustList = async () => {
     const { metadata } = await resolveEntityMetadata<{ registration_endpoint: string }>(
       opts.trustListEntityId,
       'trust_list_provider',
       opts.anchors
     )
-    const der = new x509.X509Certificate(certificate).rawData
+    const request = await new jose.SignJWT({
+      client_id: clientId,
+      dns_name: dnsName,
+      organization_name: 'Example Student Discount Co., Ltd.',
+      organization_identifier: 'NTRJP-1234567890123',
+      common_name: opts.name,
+      country: 'JP',
+      contact_uri: `${baseUrl}/`,
+      intended_use: {
+        purpose: '学割の適用確認 (在籍確認)',
+        credential: opts.vct,
+        claims: REQUESTED_CLAIMS,
+      },
+    })
+      .setProtectedHeader({ alg: 'ES256', typ: RP_REGISTRATION_TYP, jwk: rpKey.publicJwk })
+      .setAudience(opts.trustListEntityId)
+      .setIssuedAt()
+      .setJti(randomUUID())
+      .sign(rpKey.signingKey)
     const res = await fetch(metadata.registration_endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        client_id: clientId,
-        name: opts.name,
-        x5c: [Buffer.from(der).toString('base64')],
-        response_uri_origin: baseUrl,
-      }),
+      body: JSON.stringify({ request }),
     })
-    if (!res.ok) throw new Error(`trust list registration failed: ${res.status} ${await res.text()}`)
-    console.log(`[verifier] registered ${clientId} to Trust List ${opts.trustListEntityId}`)
+    if (!res.ok) throw new Error(`registration failed: ${res.status} ${await res.text()}`)
+    const { access_certificate } = (await res.json()) as { access_certificate: string }
+    accessCertificate = new x509.X509Certificate(access_certificate)
+
+    const context = initializeContext({ debug: true })
+    const newFlow = initializeVerifierFlow(context)
+    await newFlow.createVerifierMetadata(
+      verifierId,
+      VerifierMetadata({
+        client_name: opts.name,
+        vp_formats_supported: {
+          'dc+sd-jwt': { 'sd-jwt_alg_values': ['ES256'], 'kb-jwt_alg_values': ['ES256'] },
+        },
+      }),
+      { privateKey: rpKey.privateKeyPem, certificate: access_certificate, format: 'pem', alg: 'ES256' }
+    )
+    verifierFlow = newFlow
+    console.log(`[verifier] registered ${clientId}; access certificate serial ${accessCertificate.serialNumber} (${accessCertificate.issuer})`)
   }
 
   const app = new Hono()
@@ -156,8 +169,9 @@ export const createVerifier = async (opts: {
         `Verifier - ${opts.name}`,
         `<section><p>学認 学生証明書 (SD-JWT VC) の提示を要求します。</p>
         <form method="post" action="/requests"><button>提示リクエストを作成</button></form>
-        <p class="mut">client_id: <code>${esc(clientId)}</code> (Trust List: <a href="${esc(opts.trustListEntityId)}/">${esc(opts.trustListEntityId)}</a>)</p>
-        <form method="post" action="/register"><button>Trust List へ登録 / 再登録</button></form></section>
+        <p class="mut">client_id: <code>${esc(clientId)}</code> / Registrar: <a href="${esc(opts.trustListEntityId)}/">${esc(opts.trustListEntityId)}</a></p>
+        <p class="mut">Access Certificate (WRPAC): ${accessCertificate ? `<code>${esc(accessCertificate.subject)}</code><br>issuer <code>${esc(accessCertificate.issuer)}</code> serial <code>${esc(accessCertificate.serialNumber)}</code>` : '<span class="ng">未登録</span>'}</p>
+        <form method="post" action="/register"><button>Registrar へ登録 / 再登録 (Access Certificate 再発行)</button></form></section>
         <section><h3>履歴</h3><table><tr><th>state</th><th>作成</th><th>結果</th></tr>${rows}</table></section>`
       )
     )
@@ -182,17 +196,12 @@ export const createVerifier = async (opts: {
               id: 'gakunin_student',
               format: 'dc+sd-jwt',
               meta: { vct_values: [opts.vct] },
-              claims: [
-                { path: ['family_name'] },
-                { path: ['given_name'] },
-                { path: ['organization'] },
-                { path: ['enrollment_status'] },
-              ],
+              claims: REQUESTED_CLAIMS.map((claim) => ({ path: [claim] })),
             },
           ],
         },
       }
-      const { request, transactionId } = await verifierFlow.createAuthzRequest(
+      const { request, transactionId } = await flow().createAuthzRequest(
         verifierId,
         'vp_token',
         clientId,
@@ -248,7 +257,7 @@ export const createVerifier = async (opts: {
   app.get('/request.jwt/:id', async (c) => {
     try {
       const id = VerifierRequestObjectId.schema.parse(c.req.param('id'))
-      const jar = await verifierFlow.findRequestObject(verifierId, id)
+      const jar = await flow().findRequestObject(verifierId, id)
       return c.body(jar, 200, { 'Content-Type': 'application/oauth-authz-req+jwt' })
     } catch (e) {
       const { body, status } = toErrorResponse(e)
@@ -296,7 +305,7 @@ export const createVerifier = async (opts: {
       const rawVpToken = form.get('vp_token')
       const vpToken = JSON.parse(String(rawVpToken)) as Record<string, string[]>
       const response = VerifierAuthorizationResponse({ vp_token: vpToken, state })
-      await verifierFlow.verifyPresentations(response, result.transactionId, { isKbJwt: true })
+      await flow().verifyPresentations(response, result.transactionId, { isKbJwt: true })
       const first = Object.values(vpToken)[0]
       presentation = Array.isArray(first) ? first[0] : String(first)
       checks.push({ name: 'VP / KB-JWT (vcknots)', ok: true, detail: 'SD-JWT VC と Key Binding JWT を検証しました' })
