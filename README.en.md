@@ -360,6 +360,42 @@ With the servers running, the following runs login → issuance → presentation
 
 The Trust Chain Visualizer (<http://localhost:8790/trust-chain>) and the InCommon SP's Trust Chain Explorer (<http://localhost:8750/>) show each entity's Trust Chain resolution, the metadata after metadata_policy and the JWTs.
 
+## Deploying to Azure (Azure Container Apps)
+
+`deploy/azure/deploy.sh` deploys the demo to Azure Container Apps. **Every entity's Entity ID is the URL assigned by Azure.**
+
+```
+ https://aetf-issuer.<environment domain>  ─┐
+ https://aetf-nii.<environment domain>     ─┤ public proxies (one Container App per entity, 14)
+ https://aetf-console.<environment domain> ─┤   └ forward with the public host name in a header (x-aetf-host)
+ ...                                       ─┘
+                                             ▼
+                     aetf-main (internal ingress, 1 replica): every entity + the Web Wallet
+                     dispatches by public host name (LISTEN_PORT, src/main.ts)
+```
+
+- Entity IDs are `https://<PREFIX>-<name>.<defaultDomain>`. The script reads the Container Apps environment's `defaultDomain` first,
+  passes `ENTITY_URL_TEMPLATE=https://aetf-{name}.<defaultDomain>` to the main container and checks afterwards that every app's FQDN matches
+- Entities talk to each other (trust chain resolution etc.) through the public URLs, so Entity Configurations, Subordinate Statements, metadata,
+  the Verifier's `x509_san_dns` client_id and the dNSName of its access certificate all consistently use the Azure URLs / host names
+- The container image (`Dockerfile`) only uses base images from Microsoft Container Registry and is built in Azure Container Registry (`az acr build`; no local Docker needed)
+
+```bash
+az login
+./deploy/azure/deploy.sh                       # defaults: PREFIX=aetf, RESOURCE_GROUP=aetf-demo-rg, LOCATION=japaneast
+PREFIX=mydemo LOCATION=eastasia ./deploy/azure/deploy.sh   # other names / region
+./deploy/azure/destroy.sh                      # deletes the whole resource group
+```
+
+When done, the demo console (`https://aetf-console.<environment domain>`) and the URL of every entity are printed.
+
+Notes:
+
+- The main container keeps its state in memory and in `.data/` (ephemeral container storage), so it runs as exactly one replica. A restart or redeployment resets everything including the keys (like "⟲ Reset all")
+- Proxies run with at least 1 replica by default (`PROXY_MIN_REPLICAS=0` allows scaling to zero, but first requests become slow and trust chain resolution may time out). Costs follow Container Apps pricing
+- The language cookie is per host name, so on Azure the language is switched per entity (without it, the browser language is used)
+- The same topology can be run locally with Docker (main: `ENTITY_URL_TEMPLATE` and `LISTEN_PORT=8080`; proxy: `ROLE=proxy`, `UPSTREAM`; for HTTPS outside Azure give the proxy `TLS_CERT` / `TLS_KEY`)
+
 ## Where vcknots is used, and notes
 
 - **Issuer**: `initializeIssuerFlow` / `initializeAuthzFlow` (Pre-Authorized Code Flow, `dc+sd-jwt`).

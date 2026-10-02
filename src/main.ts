@@ -12,10 +12,13 @@ import {
   DEMO_CONSOLE_PORT,
   DEMO_CONSOLE_URL,
   ENTITY,
+  LISTEN_PORT,
   PORTS,
   STATUS_LIST_API_KEY,
+  WALLET_UI_PORT,
   WALLET_UI_URL,
 } from './config.js'
+import { forward, publicHost } from './common/forward.js'
 import { DATA_DIR, jwksOf, loadOrCreateKey, writeDataFile } from './common/keys.js'
 import type { FederationEntity, MetadataPolicy } from './federation/entity.js'
 import { clearEvents, emit } from './common/events.js'
@@ -39,10 +42,26 @@ import { createWalletProvider } from './services/wallet-provider.js'
 let servers: ServerType[] = []
 let walletChild: ChildProcess | undefined
 
-/** Starts a server; exits with a hint when the port is already in use. */
-const listen = (app: Hono, port: number, onListening: () => void) => {
+/** Entity apps by public host name (single-port / deployment mode). */
+let routes = new Map<string, Hono>()
+
+/**
+ * Starts a server for one entity; exits with a hint when the port is already in use.
+ * With LISTEN_PORT set, the app is only registered for its public host name and served by the
+ * dispatcher (startDispatcher).
+ */
+const listen = (app: Hono, port: number, publicUrl: string, onListening: () => void) => {
+  if (LISTEN_PORT) {
+    routes.set(new URL(publicUrl).host.toLowerCase(), app)
+    onListening()
+    return
+  }
   const server = serve({ fetch: withLang(app.fetch), port }, onListening)
   servers.push(server)
+  onServerError(server, port)
+}
+
+const onServerError = (server: ServerType, port: number) =>
   server.on('error', (err: NodeJS.ErrnoException) => {
     if (err.code === 'EADDRINUSE') {
       console.error(
@@ -53,10 +72,47 @@ const listen = (app: Hono, port: number, onListening: () => void) => {
     }
     process.exit(1)
   })
+
+/**
+ * Deployment mode: one server on LISTEN_PORT for every entity. The entity is chosen by the public
+ * host name (set by the per-entity proxies); the request URL is rewritten to the public URL so that
+ * the apps see their own origin. The web wallet's host name is forwarded to the Go process.
+ */
+const startDispatcher = async () => {
+  const port = LISTEN_PORT as number
+  const walletHost = new URL(WALLET_UI_URL).host.toLowerCase()
+  const proto = new URL(DEMO_CONSOLE_URL).protocol
+  const server = serve(
+    {
+      port,
+      fetch: async (req) => {
+        const host = publicHost(req)
+        const src = new URL(req.url)
+        if (host === walletHost) {
+          try {
+            return await forward(req, `http://127.0.0.1:${WALLET_UI_PORT}`, { 'x-forwarded-host': host })
+          } catch {
+            return new Response('web wallet is starting', { status: 503 })
+          }
+        }
+        const app = routes.get(host)
+        if (!app) {
+          if (src.pathname === '/healthz') return new Response('ok')
+          return new Response(`unknown host ${host}`, { status: 404 })
+        }
+        return withLang(app.fetch)(new Request(`${proto}//${host}${src.pathname}${src.search}`, req))
+      },
+    },
+    () => console.log(`  ${'Dispatcher'.padEnd(30)} :${port} (${routes.size} entities by host name)`)
+  )
+  servers.push(server)
+  onServerError(server, port)
+  await new Promise<void>((done) => server.once('listening', () => done()))
 }
 
 const main = async () => {
   servers = []
+  routes = new Map()
   // ---- keys ---------------------------------------------------------------------------------
   const fed = async (name: string) => loadOrCreateKey(`${name}-federation`)
   const proto = async (name: string) => loadOrCreateKey(`${name}-protocol`)
@@ -232,7 +288,7 @@ const main = async () => {
     apps.map(
       ([key, label, app]) =>
         new Promise<void>((resolve) => {
-          listen(app, PORTS[key], () => {
+          listen(app, PORTS[key], ENTITY[key], () => {
             console.log(`  ${label.padEnd(30)} ${ENTITY[key]}`)
             resolve()
           })
@@ -248,10 +304,22 @@ const main = async () => {
     }),
     onResetAll: resetAll,
   })
-  await new Promise<void>((resolve) => listen(demoConsole.app, DEMO_CONSOLE_PORT, () => resolve()))
+  await new Promise<void>((resolve) => listen(demoConsole.app, DEMO_CONSOLE_PORT, DEMO_CONSOLE_URL, () => resolve()))
   console.log(`  ${'Demo Console'.padEnd(30)} ${DEMO_CONSOLE_URL}`)
+  if (LISTEN_PORT) await startDispatcher()
 
-  await verifier.registerToTrustList()
+  // In a deployment the Trust List is reached through its public URL, whose proxy may still be
+  // starting: retry for a while.
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await verifier.registerToTrustList()
+      break
+    } catch (e) {
+      if (attempt >= 30) throw e
+      console.warn(`Registrar not reachable yet (${(e as Error).message}); retrying in 5 s`)
+      await new Promise((r) => setTimeout(r, 5000))
+    }
+  }
   console.log('\nAll entities are up. Trust anchor config written to .data/trust-anchor.json')
   if (process.argv.includes('--with-wallet')) startWebWallet()
   console.log(`\n▶ Demo console: ${DEMO_CONSOLE_URL}`)
@@ -260,16 +328,19 @@ const main = async () => {
 /** Builds and starts the Go web wallet (`wallet-instance serve`) as a child process. */
 const startWebWallet = () => {
   const dir = join(process.cwd(), 'wallet-instance')
-  const bin = join(dir, process.platform === 'win32' ? 'wallet-instance.exe' : 'wallet-instance')
-  console.log('Building the web wallet (go build)...')
-  const build = spawnSync('go', ['build', '-o', bin, '.'], {
-    cwd: dir,
-    stdio: 'inherit',
-    env: { ...process.env, GOTOOLCHAIN: process.env.GOTOOLCHAIN ?? 'auto' },
-  })
-  if (build.status !== 0 || !existsSync(bin)) {
-    console.error('Could not build the web wallet (Go 1.25+ required). Start it manually: cd wallet-instance && go run . serve')
-    return
+  // WALLET_BIN: a prebuilt binary (container image); otherwise build it with Go
+  const bin = process.env.WALLET_BIN ?? join(dir, process.platform === 'win32' ? 'wallet-instance.exe' : 'wallet-instance')
+  if (!process.env.WALLET_BIN) {
+    console.log('Building the web wallet (go build)...')
+    const build = spawnSync('go', ['build', '-o', bin, '.'], {
+      cwd: dir,
+      stdio: 'inherit',
+      env: { ...process.env, GOTOOLCHAIN: process.env.GOTOOLCHAIN ?? 'auto' },
+    })
+    if (build.status !== 0 || !existsSync(bin)) {
+      console.error('Could not build the web wallet (Go 1.25+ required). Start it manually: cd wallet-instance && go run . serve')
+      return
+    }
   }
   const child = spawn(bin, ['serve'], {
     cwd: dir,
@@ -279,7 +350,9 @@ const startWebWallet = () => {
       WALLET_DIR: process.env.WALLET_DIR ?? join(DATA_DIR, 'web-wallet'),
       TRUST_ANCHOR: join(DATA_DIR, 'trust-anchor.json'),
       DEMO_CONSOLE: DEMO_CONSOLE_URL,
-      WALLET_UI_PORT: new URL(WALLET_UI_URL).port,
+      WALLET_UI_PORT: String(WALLET_UI_PORT),
+      // deployment: the dispatcher forwards the wallet's public host name to this address
+      ...(LISTEN_PORT ? { WALLET_LISTEN_ADDR: `127.0.0.1:${WALLET_UI_PORT}` } : {}),
       WALLET_PROVIDER: ENTITY.walletProvider,
       TRUST_LIST: ENTITY.trustList,
     },

@@ -353,7 +353,8 @@ func (i *Instance) serve(port string) error {
 		})
 	})
 
-	addr := "localhost:" + port
+	// WALLET_LISTEN_ADDR: listen address when deployed behind the dispatcher (e.g. 127.0.0.1:8760)
+	addr := getenv("WALLET_LISTEN_ADDR", "localhost:"+port)
 	fmt.Printf("Web wallet UI: http://%s\n", addr)
 	return http.ListenAndServe(addr, withLang(mux))
 }

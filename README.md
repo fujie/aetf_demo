@@ -357,6 +357,42 @@ go build -o wallet-instance .
 
 Trust Chain Visualizer (<http://localhost:8790/trust-chain>) や InCommon SP の Trust Chain Explorer (<http://localhost:8750/>) で、各エンティティの Trust Chain の解決過程・metadata_policy 適用後のメタデータ・JWT を図で確認できます。
 
+## Azure へのデプロイ (Azure Container Apps)
+
+`deploy/azure/deploy.sh` で Azure Container Apps にデプロイします。**各エンティティの Entity ID には Azure が割り当てる URL** を使います。
+
+```
+ https://aetf-issuer.<環境のドメイン>  ─┐
+ https://aetf-nii.<環境のドメイン>     ─┤ 公開プロキシ (エンティティごとの Container App、14 個)
+ https://aetf-console.<環境のドメイン> ─┤   └ 公開ホスト名をヘッダ (x-aetf-host) に付けて転送
+ ...                                   ─┘
+                                         ▼
+                     aetf-main (内部 ingress, 1 レプリカ): 全エンティティ + Web Wallet
+                     公開ホスト名でエンティティを振り分け (LISTEN_PORT, src/main.ts)
+```
+
+- Entity ID は `https://<PREFIX>-<名前>.<defaultDomain>`。スクリプトは Container Apps 環境の `defaultDomain` を先に取得して
+  `ENTITY_URL_TEMPLATE=https://aetf-{name}.<defaultDomain>` を本体に渡し、作成後に各アプリの FQDN が一致することを確認します
+- エンティティ間の通信 (Trust Chain 解決など) も公開 URL 経由で行うため、Entity Configuration・Subordinate Statement・メタデータ・
+  Verifier の `x509_san_dns` client_id とアクセス証明書の dNSName など、すべて Azure の URL / ホスト名で一貫します
+- コンテナイメージ (`Dockerfile`) は Microsoft Container Registry のベースイメージのみを使い、Azure Container Registry 上でビルドします (`az acr build`、ローカルの Docker は不要)
+
+```bash
+az login
+./deploy/azure/deploy.sh                       # 既定: PREFIX=aetf, RESOURCE_GROUP=aetf-demo-rg, LOCATION=japaneast
+PREFIX=mydemo LOCATION=eastasia ./deploy/azure/deploy.sh   # 名前・リージョンを変える場合
+./deploy/azure/destroy.sh                      # リソースグループごと削除
+```
+
+完了するとデモコンソール (`https://aetf-console.<環境のドメイン>`) と各エンティティの URL が表示されます。
+
+注意:
+
+- 本体は状態をメモリと `.data/` (コンテナ内の一時領域) に持つため、レプリカは 1 固定です。再起動・再デプロイで鍵を含む全状態が初期化されます (「⟲ 全て初期化」と同じ)
+- プロキシは既定で最小 1 レプリカ (`PROXY_MIN_REPLICAS=0` でゼロスケール可。ただし初回アクセスが遅くなり Trust Chain 解決がタイムアウトしやすくなります)。費用は Container Apps の料金に従います
+- 言語設定の Cookie はホストごとになるため、Azure 上ではエンティティごとに言語を切り替えます (未設定時はブラウザの言語に従います)
+- 同じ構成はローカルでも Docker で再現できます (本体: `ENTITY_URL_TEMPLATE` と `LISTEN_PORT=8080`、プロキシ: `ROLE=proxy`・`UPSTREAM`。Azure 外で HTTPS にする場合はプロキシに `TLS_CERT` / `TLS_KEY`)
+
 ## vcknots の利用箇所と補足
 
 - **Issuer**: `initializeIssuerFlow` / `initializeAuthzFlow` (Pre-Authorized Code Flow, `dc+sd-jwt`)。

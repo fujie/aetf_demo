@@ -1,10 +1,39 @@
 /**
  * Ports / Entity Identifiers of every entity in the diagram.
- * All entities run on localhost with different ports; the entity identifier is the base URL.
+ *
+ * Locally all entities run on localhost with different ports; the entity identifier is the base URL.
+ * When deployed (e.g. Azure Container Apps) every entity has its own public URL, given with
+ * ENTITY_URL_TEMPLATE, e.g. `https://aetf-{name}.<environment domain>`, where {name} is the
+ * entity's slug (APP_SLUGS). All entities then still run in one process behind LISTEN_PORT and
+ * requests are dispatched by host name (see src/main.ts).
  */
 const HOST = process.env.PUBLIC_HOST ?? 'localhost'
+const URL_TEMPLATE = process.env.ENTITY_URL_TEMPLATE
 
-const url = (port: number) => `http://${HOST}:${port}`
+/** URL slugs of the entities (also the Azure Container App names, prefixed). */
+export const APP_SLUGS = {
+  trustAnchor: 'trust-anchor',
+  nii: 'nii',
+  i2: 'i2',
+  idp: 'idp',
+  attributeProvider: 'attribute-provider',
+  issuer: 'issuer',
+  gakuninSp: 'gakunin-sp',
+  walletProvider: 'wallet-provider',
+  trustList: 'trust-list',
+  statusList: 'status-list',
+  verifier: 'verifier',
+  incommonSp: 'incommon-sp',
+  wallet: 'wallet',
+  console: 'console',
+} as const
+
+/** Public URL of an entity: from ENTITY_URL_TEMPLATE when set, otherwise localhost:<port>. */
+const url = (port: number, slug: string) =>
+  URL_TEMPLATE ? URL_TEMPLATE.replace('{name}', slug).replace(/\/$/, '') : `http://${HOST}:${port}`
+
+/** Single listening port for all entities (deployment); unset = one port per entity (local). */
+export const LISTEN_PORT = process.env.LISTEN_PORT ? Number(process.env.LISTEN_PORT) : undefined
 
 /**
  * All ports are offsets from BASE_PORT (default 8700). Change it if a port is taken, e.g.
@@ -28,7 +57,7 @@ export const PORTS = {
 } as const
 
 export const ENTITY = Object.fromEntries(
-  Object.entries(PORTS).map(([k, port]) => [k, url(port)])
+  Object.entries(PORTS).map(([k, port]) => [k, url(port, APP_SLUGS[k as keyof typeof PORTS])])
 ) as Record<keyof typeof PORTS, string>
 
 /** Display names of the entities (Japanese / English). */
@@ -55,6 +84,7 @@ export const CREDENTIAL_VCT = `${ENTITY.issuer}/vct/GakuninStudentCredential`
 export const STATUS_LIST_API_KEY = process.env.STATUS_LIST_API_KEY ?? 'issuer-status-list-api-key'
 
 /** Web wallet UI (Go, `wallet-instance serve`) and the demo console. */
-export const WALLET_UI_URL = process.env.WALLET_UI_URL ?? `http://${HOST}:${BASE_PORT + 60}`
+export const WALLET_UI_PORT = BASE_PORT + 60
+export const WALLET_UI_URL = process.env.WALLET_UI_URL ?? url(WALLET_UI_PORT, APP_SLUGS.wallet)
 export const DEMO_CONSOLE_PORT = BASE_PORT + 90
-export const DEMO_CONSOLE_URL = `http://${HOST}:${DEMO_CONSOLE_PORT}`
+export const DEMO_CONSOLE_URL = url(DEMO_CONSOLE_PORT, APP_SLUGS.console)
