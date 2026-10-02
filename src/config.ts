@@ -6,18 +6,24 @@ const HOST = process.env.PUBLIC_HOST ?? 'localhost'
 
 const url = (port: number) => `http://${HOST}:${port}`
 
+/**
+ * All ports are offsets from BASE_PORT (default 8700). Change it if a port is taken, e.g.
+ * `BASE_PORT=9700 npm run demo`. (7000 is used by the macOS AirPlay Receiver, hence not the default.)
+ */
+export const BASE_PORT = Number(process.env.BASE_PORT ?? 8700)
+
 export const PORTS = {
-  trustAnchor: 7000, // Trust Anchor (eduGAIN)
-  nii: 7001, // Intermediate Authority (NII)
-  i2: 7002, // Intermediate Authority (Internet2 / InCommon)
-  idp: 7010, // 機関IdP
-  attributeProvider: 7011, // 属性Provider
-  issuer: 7020, // 学認Issuer
-  walletProvider: 7030, // Wallet Provider
-  trustList: 7031, // Trust List (Verifier registry)
-  statusList: 7032, // Status List
-  verifier: 7040, // Verifier (OID4VP)
-  incommonSp: 7050, // InCommon SP
+  trustAnchor: BASE_PORT + 0, // Trust Anchor (eduGAIN)
+  nii: BASE_PORT + 1, // Intermediate Authority (NII)
+  i2: BASE_PORT + 2, // Intermediate Authority (Internet2 / InCommon)
+  idp: BASE_PORT + 10, // 機関IdP
+  attributeProvider: BASE_PORT + 11, // 属性Provider
+  issuer: BASE_PORT + 20, // 学認Issuer
+  walletProvider: BASE_PORT + 30, // Wallet Provider
+  trustList: BASE_PORT + 31, // Trust List (Registrar / Access CA / LoTE)
+  statusList: BASE_PORT + 32, // Status List
+  verifier: BASE_PORT + 40, // Verifier (OID4VP)
+  incommonSp: BASE_PORT + 50, // InCommon SP
 } as const
 
 export const ENTITY = Object.fromEntries(
@@ -32,6 +38,6 @@ export const CREDENTIAL_VCT = `${ENTITY.issuer}/vct/GakuninStudentCredential`
 export const STATUS_LIST_API_KEY = process.env.STATUS_LIST_API_KEY ?? 'issuer-status-list-api-key'
 
 /** Web wallet UI (Go, `wallet-instance serve`) and the demo console. */
-export const WALLET_UI_URL = process.env.WALLET_UI_URL ?? `http://${HOST}:7060`
-export const DEMO_CONSOLE_PORT = 7100
+export const WALLET_UI_URL = process.env.WALLET_UI_URL ?? `http://${HOST}:${BASE_PORT + 60}`
+export const DEMO_CONSOLE_PORT = BASE_PORT + 90
 export const DEMO_CONSOLE_URL = `http://${HOST}:${DEMO_CONSOLE_PORT}`

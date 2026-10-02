@@ -5,6 +5,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import {
+  BASE_PORT,
   CREDENTIAL_CONFIGURATION_ID,
   CREDENTIAL_VCT,
   DEMO_CONSOLE_PORT,
@@ -27,6 +28,21 @@ import { createStatusList } from './services/status-list.js'
 import { createTrustList } from './services/trust-list.js'
 import { createVerifier } from './services/verifier.js'
 import { createWalletProvider } from './services/wallet-provider.js'
+
+/** Starts a server; exits with a hint when the port is already in use. */
+const listen = (app: Hono, port: number, onListening: () => void) => {
+  const server = serve({ fetch: app.fetch, port }, onListening)
+  server.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(
+        `\n✘ Port ${port} is already in use.\n  Choose another port range with BASE_PORT, e.g.:  BASE_PORT=9700 npm run demo\n  (current BASE_PORT=${BASE_PORT}; ports BASE_PORT..BASE_PORT+90 are used)`
+      )
+    } else {
+      console.error(err)
+    }
+    process.exit(1)
+  })
+}
 
 const main = async () => {
   // ---- keys ---------------------------------------------------------------------------------
@@ -188,7 +204,7 @@ const main = async () => {
     apps.map(
       ([key, label, app]) =>
         new Promise<void>((resolve) => {
-          serve({ fetch: app.fetch, port: PORTS[key] }, () => {
+          listen(app, PORTS[key], () => {
             console.log(`  ${label.padEnd(30)} ${ENTITY[key]}`)
             resolve()
           })
@@ -197,7 +213,7 @@ const main = async () => {
   )
 
   const demoConsole = createDemoConsole()
-  await new Promise<void>((resolve) => serve({ fetch: demoConsole.app.fetch, port: DEMO_CONSOLE_PORT }, () => resolve()))
+  await new Promise<void>((resolve) => listen(demoConsole.app, DEMO_CONSOLE_PORT, () => resolve()))
   console.log(`  ${'Demo Console'.padEnd(30)} ${DEMO_CONSOLE_URL}`)
 
   await verifier.registerToTrustList()
@@ -229,6 +245,8 @@ const startWebWallet = () => {
       TRUST_ANCHOR: join(DATA_DIR, 'trust-anchor.json'),
       DEMO_CONSOLE: DEMO_CONSOLE_URL,
       WALLET_UI_PORT: new URL(WALLET_UI_URL).port,
+      WALLET_PROVIDER: ENTITY.walletProvider,
+      TRUST_LIST: ENTITY.trustList,
     },
   })
   const stop = () => child.kill()

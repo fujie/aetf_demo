@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/trustknots/vcknots/wallet/env"
@@ -27,11 +28,19 @@ func getenv(k, def string) string {
 	return def
 }
 
+// basePort mirrors BASE_PORT of the TypeScript servers (src/config.ts).
+func basePort() int {
+	if p, err := strconv.Atoi(os.Getenv("BASE_PORT")); err == nil && p > 0 {
+		return p
+	}
+	return 8700
+}
+
 func usage() {
 	fmt.Fprintf(os.Stderr, `usage: wallet-instance <command> [args]
 
 commands:
-  serve                        run the web wallet UI (default http://localhost:7060)
+  serve                        run the web wallet UI (default http://localhost:<BASE_PORT+60>)
   init                         register with the Wallet Provider and obtain a Wallet Attestation
   receive '<credential offer>' receive a credential (OID4VCI pre-authorized code flow)
   present '<openid4vp uri>' [--claims a,b,c]
@@ -41,9 +50,10 @@ commands:
 environment:
   WALLET_DIR       wallet data directory (default ./.wallet)
   TRUST_ANCHOR     trust anchor config  (default ../.data/trust-anchor.json)
-  WALLET_PROVIDER  Wallet Provider entity id (default http://localhost:7030)
-  TRUST_LIST       Trust List provider entity id (default http://localhost:7031)
-  WALLET_UI_PORT   port of the web wallet UI (default 7060)
+  BASE_PORT        base port of the prototype servers (default 8700)
+  WALLET_PROVIDER  Wallet Provider entity id (default http://localhost:<BASE_PORT+30>)
+  TRUST_LIST       Trust List provider entity id (default http://localhost:<BASE_PORT+31>)
+  WALLET_UI_PORT   port of the web wallet UI (default BASE_PORT+60)
   DEMO_CONSOLE     demo console URL to forward wallet events to (optional)
 `)
 	os.Exit(2)
@@ -61,12 +71,12 @@ func main() {
 		getenv("TRUST_ANCHOR", filepath.Join("..", ".data", "trust-anchor.json")),
 	)
 	if err == nil {
-		inst.state.WalletProvider = getenv("WALLET_PROVIDER", "http://localhost:7030")
-		inst.state.TrustListProvider = getenv("TRUST_LIST", "http://localhost:7031")
+		inst.state.WalletProvider = getenv("WALLET_PROVIDER", fmt.Sprintf("http://localhost:%d", basePort()+30))
+		inst.state.TrustListProvider = getenv("TRUST_LIST", fmt.Sprintf("http://localhost:%d", basePort()+31))
 		inst.steps.console = true
 		switch os.Args[1] {
 		case "serve":
-			err = inst.serve(getenv("WALLET_UI_PORT", "7060"))
+			err = inst.serve(getenv("WALLET_UI_PORT", strconv.Itoa(basePort()+60)))
 		case "init":
 			err = inst.RefreshAttestation()
 		case "receive":

@@ -8,9 +8,11 @@ WORK="$(mktemp -d)"
 JAR="$WORK/cookies"
 trap 'rm -rf "$WORK"' EXIT
 
-ISSUER=http://localhost:7020
-IDP=http://localhost:7010
-VERIFIER=http://localhost:7040
+BASE_PORT="${BASE_PORT:-8700}"
+export BASE_PORT
+ISSUER=http://localhost:$((BASE_PORT + 20))
+IDP=http://localhost:$((BASE_PORT + 10))
+VERIFIER=http://localhost:$((BASE_PORT + 40))
 USER_NAME="${1:-taro}"
 
 step() { printf '\n\033[1;34m== %s\033[0m\n' "$*"; }

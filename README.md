@@ -16,16 +16,20 @@ npm install
 npm run demo        # 全エンティティ + Web Wallet (Go) を起動。Go 1.25+ が必要 (GOTOOLCHAIN=auto で自動取得)
 ```
 
-起動後 **<http://localhost:7100>** (デモコンソール) を開いてください。
+起動後 **<http://localhost:8790>** (デモコンソール) を開いてください。
+
+ポートは `BASE_PORT` (既定 8700) からの相対で、`BASE_PORT` 〜 `BASE_PORT+90` を使います。
+ポートが使用中で起動できない場合は、`BASE_PORT=9700 npm run demo` のようにずらしてください
+(以下の URL も同じだけずれます。CLI の Wallet / `scripts/demo.sh` も同じ `BASE_PORT` を参照します)。
 
 | 画面 | URL | 内容 |
 | --- | --- | --- |
-| デモコンソール | <http://localhost:7100> | 図と同じ構成図 (クリックで各画面へ・稼働状態表示)、手順ガイド、全エンティティの処理がリアルタイムに流れるタイムライン |
-| Web Wallet | <http://localhost:7060> | スマートフォン風のウォレット。登録、受け取り (Issuer の信頼チェーン確認)、提示 (Verifier 認証と開示する属性の選択)、カードごとの状態 (VALID / SUSPENDED / INVALID) |
-| 学認Issuer | <http://localhost:7020> | 機関IdP でログイン (`taro` / `hanako`、パスワード `password`)、Credential Offer、管理画面 (一時停止 / 再開 / 失効) |
-| Verifier | <http://localhost:7040> | 提示リクエスト作成、検証結果 (Wallet Attestation / VP / Issuer / Status List) |
-| Trust List | <http://localhost:7031> | Registrar (RP の一時停止・取消)、LoTE、Access CA |
-| Wallet Provider | <http://localhost:7030> | Wallet Instance の一覧と失効 |
+| デモコンソール | <http://localhost:8790> | 図と同じ構成図 (クリックで各画面へ・稼働状態表示)、手順ガイド、全エンティティの処理がリアルタイムに流れるタイムライン |
+| Web Wallet | <http://localhost:8760> | スマートフォン風のウォレット。登録、受け取り (Issuer の信頼チェーン確認)、提示 (Verifier 認証と開示する属性の選択)、カードごとの状態 (VALID / SUSPENDED / INVALID) |
+| 学認Issuer | <http://localhost:8720> | 機関IdP でログイン (`taro` / `hanako`、パスワード `password`)、Credential Offer、管理画面 (一時停止 / 再開 / 失効) |
+| Verifier | <http://localhost:8740> | 提示リクエスト作成、検証結果 (Wallet Attestation / VP / Issuer / Status List) |
+| Trust List | <http://localhost:8731> | Registrar (RP の一時停止・取消)、LoTE、Access CA |
+| Wallet Provider | <http://localhost:8730> | Wallet Instance の一覧と失効 |
 
 Issuer の Offer 画面と Verifier のリクエスト画面にある **「Web Wallet で開く」** で、QR コードの読み取りの代わりにウォレットが開きます
 (URI を Web Wallet の「読み取り」に貼り付けても同じです)。
@@ -53,33 +57,33 @@ Issuer の Offer 画面と Verifier のリクエスト画面にある **「Web W
 ## 構成 (図との対応)
 
 ```
-                      Trust Anchor (eduGAIN) :7000
+                      Trust Anchor (eduGAIN) :8700
                        ▲                     ▲
-       Intermediate Authority (NII) :7001   Intermediate Authority (I2) :7002
+       Intermediate Authority (NII) :8701   Intermediate Authority (I2) :8702
    ┌───────────┬──────────┬───────────┬──────────┬──────────┐        ▲
- 機関IdP     属性Provider  学認Issuer   Wallet      Trust List  Status List   InCommon SP :7050
- :7010       :7011        :7020       Provider    :7031       :7032
-                                      :7030         ▲
+ 機関IdP     属性Provider  学認Issuer   Wallet      Trust List  Status List   InCommon SP :8750
+ :8710       :8711        :8720       Provider    :8731       :8732
+                                      :8730         ▲
                                         ▲           │ Registration
                                         │ Registration
-                                Wallet Instance   Verifier :7040
+                                Wallet Instance   Verifier :8740
                                 (Go CLI)
 ```
 
 | 図の要素 | Entity ID | 実装 | 役割 |
 | --- | --- | --- | --- |
-| Trust Anchor (eduGAIN) | `http://localhost:7000` | `src/services/authority.ts` | 信頼の起点。NII / I2 を下位に登録し、eduGAIN 全体の `metadata_policy` を適用 |
-| Intermediate Authority (NII) | `http://localhost:7001` | `src/services/authority.ts` | 学認の中間機関。学認IdP / 学認SP / IHV 関連エンティティを登録 |
-| Intermediate Authority (I2) | `http://localhost:7002` | `src/services/authority.ts` | InCommon の中間機関 |
-| 機関IdP | `http://localhost:7010` | `src/services/idp.ts` | OpenID Provider。RP を **Federation の automatic registration** で受け入れ (redirect_uris / jwks は Trust Chain 解決後のメタデータから取得) |
-| 属性Provider | `http://localhost:7011` | `src/services/attribute-provider.ts` | 学籍番号・学部などの追加属性を返す。要求者を Trust Chain で検証し、応答に署名 |
-| 学認Issuer (学認SPとして構成) | `http://localhost:7020` | `src/services/issuer.ts` | vcknots IssuerFlow / AuthzFlow。機関IdP でログイン → 属性Provider → SD-JWT VC を発行 |
-| Wallet Provider | `http://localhost:7030` | `src/services/wallet-provider.ts` | Wallet Instance 登録と Wallet Attestation (`oauth-client-attestation+jwt`) 発行 |
-| Trust List | `http://localhost:7031` | `src/services/trust-list.ts`, `src/trust-list/` | EUDI モデルの Registrar + Access CA (WRPAC Provider) + LoTE Provider。WRPAC Providers の [ETSI TS 119 602 LoTE](#trust-list-etsi-ts-119-602--ts-119-411-8) を配布 |
-| Status List | `http://localhost:7032` | `src/services/status-list.ts` | [Token Status List (draft-ietf-oauth-status-list)](https://datatracker.ietf.org/doc/draft-ietf-oauth-status-list/) の Status Issuer / Status Provider |
-| Verifiers | `http://localhost:7040` | `src/services/verifier.ts` | vcknots VerifierFlow (OID4VP, x509_san_dns + JAR)。起動時に Registrar へ登録し、アクセス証明書 (WRPAC) を Request Object の `x5c` に使用 |
-| Wallet Instance | `http://localhost:7060` (Web) / CLI | `wallet-instance/` (Go) | vcknots Go ウォレット + Wallet Attestation / Federation / Trust List 検証 |
-| InCommon SP | `http://localhost:7050` | `src/services/incommon-sp.ts` | I2 配下の RP。Trust Chain Explorer として任意のエンティティの信頼チェーンを表示 |
+| Trust Anchor (eduGAIN) | `http://localhost:8700` | `src/services/authority.ts` | 信頼の起点。NII / I2 を下位に登録し、eduGAIN 全体の `metadata_policy` を適用 |
+| Intermediate Authority (NII) | `http://localhost:8701` | `src/services/authority.ts` | 学認の中間機関。学認IdP / 学認SP / IHV 関連エンティティを登録 |
+| Intermediate Authority (I2) | `http://localhost:8702` | `src/services/authority.ts` | InCommon の中間機関 |
+| 機関IdP | `http://localhost:8710` | `src/services/idp.ts` | OpenID Provider。RP を **Federation の automatic registration** で受け入れ (redirect_uris / jwks は Trust Chain 解決後のメタデータから取得) |
+| 属性Provider | `http://localhost:8711` | `src/services/attribute-provider.ts` | 学籍番号・学部などの追加属性を返す。要求者を Trust Chain で検証し、応答に署名 |
+| 学認Issuer (学認SPとして構成) | `http://localhost:8720` | `src/services/issuer.ts` | vcknots IssuerFlow / AuthzFlow。機関IdP でログイン → 属性Provider → SD-JWT VC を発行 |
+| Wallet Provider | `http://localhost:8730` | `src/services/wallet-provider.ts` | Wallet Instance 登録と Wallet Attestation (`oauth-client-attestation+jwt`) 発行 |
+| Trust List | `http://localhost:8731` | `src/services/trust-list.ts`, `src/trust-list/` | EUDI モデルの Registrar + Access CA (WRPAC Provider) + LoTE Provider。WRPAC Providers の [ETSI TS 119 602 LoTE](#trust-list-etsi-ts-119-602--ts-119-411-8) を配布 |
+| Status List | `http://localhost:8732` | `src/services/status-list.ts` | [Token Status List (draft-ietf-oauth-status-list)](https://datatracker.ietf.org/doc/draft-ietf-oauth-status-list/) の Status Issuer / Status Provider |
+| Verifiers | `http://localhost:8740` | `src/services/verifier.ts` | vcknots VerifierFlow (OID4VP, x509_san_dns + JAR)。起動時に Registrar へ登録し、アクセス証明書 (WRPAC) を Request Object の `x5c` に使用 |
+| Wallet Instance | `http://localhost:8760` (Web) / CLI | `wallet-instance/` (Go) | vcknots Go ウォレット + Wallet Attestation / Federation / Trust List 検証 |
+| InCommon SP | `http://localhost:8750` | `src/services/incommon-sp.ts` | I2 配下の RP。Trust Chain Explorer として任意のエンティティの信頼チェーンを表示 |
 
 OpenID Federation 部分は `src/federation/` (TypeScript) と `wallet-instance/federation.go` (Go) にあります。
 
@@ -225,7 +229,7 @@ go build -o wallet-instance .
 
 ### 3. 発行 (ブラウザ + CLI)
 
-1. <http://localhost:7020/> を開き「機関IdPでログイン」(デモユーザー: `taro` / `hanako`、パスワード `password`)
+1. <http://localhost:8720/> を開き「機関IdPでログイン」(デモユーザー: `taro` / `hanako`、パスワード `password`)
 2. 取得した属性を確認し「Credential Offer を作成」
 3. 表示されたコマンドを実行
 
@@ -236,7 +240,7 @@ go build -o wallet-instance .
 
 ### 4. 提示
 
-1. <http://localhost:7040/> を開き「提示リクエストを作成」
+1. <http://localhost:8740/> を開き「提示リクエストを作成」
 2. 表示されたコマンドを実行 (結果は Verifier の画面に自動反映)
 
 ```bash
@@ -247,11 +251,11 @@ go build -o wallet-instance .
 
 ### 5. 失効・不正系の確認
 
-- 一時停止 / 再開 / 失効: <http://localhost:7020/admin> で「一時停止 (SUSPENDED)」「再開 (VALID)」「失効 (INVALID)」→ 再提示すると Verifier が `SUSPENDED` / `INVALID` で拒否。
+- 一時停止 / 再開 / 失効: <http://localhost:8720/admin> で「一時停止 (SUSPENDED)」「再開 (VALID)」「失効 (INVALID)」→ 再提示すると Verifier が `SUSPENDED` / `INVALID` で拒否。
   Verifier は Status List Token を `ttl` (既定 10 秒) キャッシュするため、反映まで最大 `ttl` 秒かかります。`./wallet-instance list` でも Holder 側から状態を確認できます
-- Verifier の登録停止: <http://localhost:7031/> で「一時停止」(certificateHold) または「登録取消」(cessationOfOperation) → アクセス証明書が CRL で失効し、Wallet が提示を拒否。「再開」で復帰し、取消後は Verifier 画面の「Registrar へ登録 / 再登録」で新しいアクセス証明書が発行されます
-- Wallet Attestation なし: `curl -X POST http://localhost:7020/token -d ...` は `invalid_client`
-- Wallet Instance 失効: <http://localhost:7030/> で失効 → 以後の Attestation 取得が拒否されます (発行済み Attestation は有効期限 1 時間まで有効)
+- Verifier の登録停止: <http://localhost:8731/> で「一時停止」(certificateHold) または「登録取消」(cessationOfOperation) → アクセス証明書が CRL で失効し、Wallet が提示を拒否。「再開」で復帰し、取消後は Verifier 画面の「Registrar へ登録 / 再登録」で新しいアクセス証明書が発行されます
+- Wallet Attestation なし: `curl -X POST http://localhost:8720/token -d ...` は `invalid_client`
+- Wallet Instance 失効: <http://localhost:8730/> で失効 → 以後の Attestation 取得が拒否されます (発行済み Attestation は有効期限 1 時間まで有効)
 
 ### 一括デモ
 
@@ -268,7 +272,7 @@ go build -o wallet-instance .
 | --- | --- |
 | ![issuer](docs/images/issuer.png) | ![verifier](docs/images/vresult.png) |
 
-InCommon SP の Trust Chain Explorer (<http://localhost:7050/>) で、各エンティティの Trust Chain・metadata_policy 適用後のメタデータ・JWT を確認できます。
+InCommon SP の Trust Chain Explorer (<http://localhost:8750/>) で、各エンティティの Trust Chain・metadata_policy 適用後のメタデータ・JWT を確認できます。
 
 ## vcknots の利用箇所と補足
 
