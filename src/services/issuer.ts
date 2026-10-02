@@ -30,6 +30,7 @@ import {
 } from '../common/wallet-attestation.js'
 import { createFederationEntity, mountFederationEndpoints } from '../federation/entity.js'
 import { type TrustAnchorConfig, resolveEntityMetadata } from '../federation/resolver.js'
+import { StatusType, statusTypeName } from '../status-list/token-status-list.js'
 import { ATTRIBUTE_REQUEST_TYP, ATTRIBUTE_RESPONSE_TYP } from './attribute-provider.js'
 
 const PRE_CODE_TTL_SEC = 10 * 60
@@ -54,7 +55,8 @@ type Issuance = {
   walletProviderPath?: string[]
   issuedAt?: string
   status?: { idx: number; uri: string }
-  revoked?: boolean
+  /** Current Status Type set at the Status List (0x00 VALID, 0x01 INVALID, 0x02 SUSPENDED). */
+  statusValue?: number
 }
 
 /**
@@ -186,6 +188,8 @@ export const createIssuer = async (opts: {
   const jwtVcIssuer = await issuerFlow.findJwtVcIssuerMetadata(issuerId)
   const credentialJwks = (jwtVcIssuer as { jwks?: { keys: jose.JWK[] } } | null)?.jwks
 
+  const statusListAggregationEndpoint = `${opts.statusListEntityId}/aggregation?issuer=${encodeURIComponent(baseUrl)}`
+
   // ---- OpenID Federation ------------------------------------------------------------------
   const entity = createFederationEntity({
     entityId: baseUrl,
@@ -201,6 +205,8 @@ export const createIssuer = async (opts: {
         issuer: baseUrl,
         token_endpoint: `${baseUrl}/token`,
         token_endpoint_auth_methods_supported: ['attest_jwt_client_auth'],
+        // draft-ietf-oauth-status-list section 9.1
+        status_list_aggregation_endpoint: statusListAggregationEndpoint,
       },
       openid_relying_party: {
         client_name: '学認Issuer',
@@ -402,34 +408,58 @@ export const createIssuer = async (opts: {
     }
   })
 
+  const STATUS_ACTIONS: Record<number, [label: string, target: number][]> = {
+    [StatusType.VALID]: [
+      ['一時停止 (SUSPENDED)', StatusType.SUSPENDED],
+      ['失効 (INVALID)', StatusType.INVALID],
+    ],
+    [StatusType.SUSPENDED]: [
+      ['再開 (VALID)', StatusType.VALID],
+      ['失効 (INVALID)', StatusType.INVALID],
+    ],
+    [StatusType.INVALID]: [],
+  }
+
   app.get('/admin', (c) => {
     const rows = [...issuances.values()]
-      .map(
-        (i) => `<tr><td>${esc(i.user)}</td><td>${esc(i.createdAt)}</td><td>${esc(i.issuedAt ?? '未受領')}</td>
+      .map((i) => {
+        const value = i.statusValue ?? StatusType.VALID
+        const actions = (STATUS_ACTIONS[value] ?? [])
+          .map(
+            ([label, target]) =>
+              `<form style="display:inline" method="post" action="/admin/status"><input type="hidden" name="code" value="${esc(i.preAuthorizedCode)}"><input type="hidden" name="status" value="${target}"><button>${esc(label)}</button></form>`
+          )
+          .join(' ')
+        return `<tr><td>${esc(i.user)}</td><td>${esc(i.createdAt)}</td><td>${esc(i.issuedAt ?? '未受領')}</td>
         <td>${i.walletClientId ? `<code>${esc(i.walletClientId)}</code><br><span class="mut">${trustChainHtml(i.walletProviderPath ?? [])}</span>` : ''}</td>
-        <td>${i.status ? `idx=${i.status.idx}` : ''}</td>
-        <td>${i.status ? (i.revoked ? '<span class="ng">失効</span>' : `<span class="ok">有効</span> <form style="display:inline" method="post" action="/admin/revoke"><input type="hidden" name="code" value="${esc(i.preAuthorizedCode)}"><button>失効させる</button></form>`) : ''}</td></tr>`
-      )
+        <td>${i.status ? `<code>${esc(i.status.uri)}</code><br>idx=${i.status.idx}` : ''}</td>
+        <td>${i.status ? `<span class="${value === StatusType.VALID ? 'ok' : 'ng'}">${esc(statusTypeName(value))}</span> ${actions}` : ''}</td></tr>`
+      })
       .join('')
     return c.html(
       page(
         '学認Issuer - 発行済みクレデンシャル',
         `<section><table><tr><th>ユーザー</th><th>Offer作成</th><th>発行</th><th>Wallet Instance</th><th>Status List</th><th>状態</th></tr>${rows}</table></section>
+        <section class="mut">Status List Aggregation: <a href="${esc(statusListAggregationEndpoint)}">${esc(statusListAggregationEndpoint)}</a></section>
         <section><a href="/">戻る</a></section>`
       )
     )
   })
 
-  app.post('/admin/revoke', async (c) => {
+  /** Updates the Token Status List entry of an issued credential at the Status List provider. */
+  app.post('/admin/status', async (c) => {
     const form = await c.req.parseBody()
     const issuance = issuances.get(String(form.code))
-    if (issuance?.status) {
+    const target = Number(form.status)
+    const allowed = (STATUS_ACTIONS[issuance?.statusValue ?? StatusType.VALID] ?? []).some(([, t]) => t === target)
+    if (issuance?.status && allowed) {
       const res = await fetch(`${issuance.status.uri}/entries/${issuance.status.idx}`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${opts.statusListApiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 1 }),
+        body: JSON.stringify({ status: target }),
       })
-      if (res.ok) issuance.revoked = true
+      if (res.ok) issuance.statusValue = target
+      else console.warn('[issuer] status update failed', res.status, await res.text())
     }
     return c.redirect('/admin', 303)
   })
@@ -439,7 +469,10 @@ export const createIssuer = async (opts: {
     c.json(await issuerFlow.findIssuerMetadata(issuerId))
   )
   app.get('/.well-known/oauth-authorization-server', async (c) =>
-    c.json(await authzFlow.findAuthzServerMetadata(authzId))
+    c.json({
+      ...(await authzFlow.findAuthzServerMetadata(authzId)),
+      status_list_aggregation_endpoint: statusListAggregationEndpoint,
+    })
   )
   app.get('/.well-known/jwt-vc-issuer', async (c) =>
     c.json(await issuerFlow.findJwtVcIssuerMetadata(issuerId))
@@ -522,6 +555,7 @@ export const createIssuer = async (opts: {
         })
         if (!res.ok) throw new Error(`status list allocation failed: ${res.status}`)
         issuance.status = ((await res.json()) as { status_list: { idx: number; uri: string } }).status_list
+        issuance.statusValue = StatusType.VALID
       }
 
       const credential = await issuerFlow.issueCredential(issuerId, CredentialRequest(await c.req.json()), {

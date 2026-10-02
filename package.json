@@ -6,7 +6,8 @@
   "description": "IHV prototype: OpenID Federation (eduGAIN / NII / I2) + vcknots Issuer/Verifier + Go Wallet Instance",
   "scripts": {
     "start": "tsx src/main.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test \"test/**/*.spec.ts\""
   },
   "license": "Apache-2.0",
   "dependencies": {

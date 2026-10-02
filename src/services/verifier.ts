@@ -1,7 +1,6 @@
 import { randomUUID, webcrypto } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { inflateSync } from 'node:zlib'
 import { Hono } from 'hono'
 import * as jose from 'jose'
 import * as x509 from '@peculiar/x509'
@@ -22,8 +21,9 @@ import {
   ATTESTATION_POP_HEADER,
   verifyWalletAttestation,
 } from '../common/wallet-attestation.js'
-import { type TrustAnchorConfig, resolveEntityMetadata } from '../federation/resolver.js'
-import { STATUS_LIST_TYP } from './status-list.js'
+import { type TrustAnchorConfig, resolveEntityMetadata, resolveTrustChain } from '../federation/resolver.js'
+import { federationStatusListKeyResolver } from '../status-list/federation-key-resolver.js'
+import { StatusType, createStatusListClient } from '../status-list/token-status-list.js'
 
 type Check = { name: string; ok: boolean; detail: string }
 type PresentationResult = {
@@ -117,6 +117,7 @@ export const createVerifier = async (opts: {
   )
 
   const results = new Map<string, PresentationResult>() // by state
+  const statusListClient = createStatusListClient(federationStatusListKeyResolver(opts.anchors))
 
   /** Registration to the Trust List (red "Registration" arrow in the diagram). */
   const registerToTrustList = async () => {
@@ -267,7 +268,8 @@ export const createVerifier = async (opts: {
       result.status = 'rejected'
       result.checks = checks
       const last = checks[checks.length - 1]
-      return c.json({ error: 'access_denied', error_description: `${last?.name}: ${last?.detail}` }, status)
+      const plain = (last?.detail ?? '').replace(/<br>/g, ' / ').replace(/<[^>]+>/g, '').replace(/&rarr;/g, '->').replace(/\s+/g, ' ')
+      return c.json({ error: 'access_denied', error_description: `${last?.name}: ${plain}` }, status)
     }
 
     // 1. Wallet Attestation -> Wallet Provider trusted via OpenID Federation
@@ -320,30 +322,19 @@ export const createVerifier = async (opts: {
       return fail()
     }
 
-    // 4. Revocation check with the Token Status List (Status List provider trusted via OpenID Federation)
+    // 4. Status check per draft-ietf-oauth-status-list section 8.3 (the Referenced Token itself was
+    //    validated in steps 2-3). The Status Issuer is trusted via OpenID Federation.
     try {
-      const ref = (sdJwt.payload.status as { status_list?: { idx: number; uri: string } } | undefined)?.status_list
-      if (!ref) throw new Error('credential has no status_list reference')
-      const res = await fetch(ref.uri, { headers: { Accept: 'application/statuslist+jwt' } })
-      if (!res.ok) throw new Error(`status list fetch failed: ${res.status}`)
-      const token = (await res.text()).trim()
-      const slIss = String(jose.decodeJwt(token).iss)
-      if (!ref.uri.startsWith(`${slIss}/`)) throw new Error('status list uri is not hosted by its issuer')
-      const { metadata, chain } = await resolveEntityMetadata<{ jwks?: { keys: jose.JWK[] } }>(
-        slIss,
-        'status_list_provider',
-        opts.anchors
-      )
-      const { payload } = await verifyWithJwks(token, metadata.jwks, { typ: STATUS_LIST_TYP, subject: ref.uri })
-      const sl = payload.status_list as { bits: number; lst: string }
-      const bytes = inflateSync(Buffer.from(sl.lst, 'base64url'))
-      const perByte = 8 / sl.bits
-      const value = (bytes[Math.floor(ref.idx / perByte)] >> ((ref.idx % perByte) * sl.bits)) & ((1 << sl.bits) - 1)
-      if (value !== 0) {
-        checks.push({ name: 'Status List', ok: false, detail: `idx=${ref.idx} status=${value} (INVALID / 失効済み)` })
+      const st = await statusListClient.check(sdJwt.payload as Record<string, unknown>)
+      const chain = st.statusIssuer ? await resolveTrustChain(st.statusIssuer, opts.anchors) : undefined
+      const detail = `idx=${st.idx} status=0x${st.status.toString(16).padStart(2, '0')} (${st.statusName})
+        <br><code>${esc(st.uri)}</code> iat=${new Date(st.token.iat * 1000).toISOString()} ttl=${st.token.ttl ?? '-'}s${st.fromCache ? ' (cached)' : ''}
+        <br>Status Issuer: ${chain ? trustChainHtml(chain.path) : '-'}`
+      if (st.status !== StatusType.VALID) {
+        checks.push({ name: 'Status List', ok: false, detail })
         return fail()
       }
-      checks.push({ name: 'Status List', ok: true, detail: `idx=${ref.idx} status=0 (VALID)<br>Status List: ${trustChainHtml(chain.path)}` })
+      checks.push({ name: 'Status List', ok: true, detail })
     } catch (e) {
       checks.push({ name: 'Status List', ok: false, detail: esc((e as Error).message) })
       return fail()

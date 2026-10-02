@@ -35,7 +35,7 @@
 | 学認Issuer (学認SPとして構成) | `http://localhost:7020` | `src/services/issuer.ts` | vcknots IssuerFlow / AuthzFlow。機関IdP でログイン → 属性Provider → SD-JWT VC を発行 |
 | Wallet Provider | `http://localhost:7030` | `src/services/wallet-provider.ts` | Wallet Instance 登録と Wallet Attestation (`oauth-client-attestation+jwt`) 発行 |
 | Trust List | `http://localhost:7031` | `src/services/trust-list.ts` | Verifier の登録簿。署名付きリスト (`trust-list+jwt`) を配布 |
-| Status List | `http://localhost:7032` | `src/services/status-list.ts` | IETF Token Status List (`statuslist+jwt`) による失効管理 |
+| Status List | `http://localhost:7032` | `src/services/status-list.ts` | [Token Status List (draft-ietf-oauth-status-list)](https://datatracker.ietf.org/doc/draft-ietf-oauth-status-list/) の Status Issuer / Status Provider |
 | Verifiers | `http://localhost:7040` | `src/services/verifier.ts` | vcknots VerifierFlow (OID4VP, x509_san_dns + JAR)。起動時に Trust List へ登録 |
 | Wallet Instance | (CLI) | `wallet-instance/` (Go) | vcknots Go ウォレット + Wallet Attestation / Federation / Trust List 検証 |
 | InCommon SP | `http://localhost:7050` | `src/services/incommon-sp.ts` | I2 配下の RP。Trust Chain Explorer として任意のエンティティの信頼チェーンを表示 |
@@ -50,8 +50,8 @@ OpenID Federation 部分は `src/federation/` (TypeScript) と `wallet-instance/
 | その際、Wallet Provider の正当性を OpenID Federation で検証する (Wallet Provider は複数存在してもよい) | Attestation の `iss` から Trust Chain を解決し、`wallet_provider` メタデータの `jwks` で署名検証。Wallet Provider を固定せず、Trust Anchor に繋がる任意の Wallet Provider を受け入れる |
 | Wallet が Verifier を信頼するために Trust List を照会する | Wallet Instance は `client_id` を Trust List で検索し、登録された証明書を **vcknots の `X509TrustChainRoots`** に渡して Request Object (x5c) を検証 (`wallet-instance/trustlist.go`) |
 | その際、Trust List の正当性を OpenID Federation で検証する | Trust List 提供者の Trust Chain を解決し、`trust_list_provider.jwks` で `trust-list+jwt` の署名を検証 |
-| Verifier は Credential の失効確認を Status List へ照会して行う | Issuer は発行時に Status List から index を割り当て、SD-JWT VC の (非選択開示の) `status.status_list` に埋め込む。Verifier は Status List Token を取得してビットを確認 |
-| その際、Status List の正当性を OpenID Federation で検証する | Status List Token の `iss` の Trust Chain を解決し、`status_list_provider.jwks` で署名検証。`sub` と参照 URI の一致も確認 |
+| Verifier は Credential の失効確認を Status List へ照会して行う | Issuer は発行時に Status List から index を割り当て、SD-JWT VC の (非選択開示の) `status.status_list` (`idx`, `uri`) に埋め込む。Verifier は draft の Validation Rules に従って Status List Token を取得・検証し、VALID / INVALID / SUSPENDED を判定 ([下記](#token-status-list-draft-ietf-oauth-status-list)) |
+| その際、Status List の正当性を OpenID Federation で検証する | Status List Token の `iss` (Status Issuer) の Trust Chain を解決し、`status_list_provider.jwks` で署名検証 (draft の Key Resolution and Trust Management を本エコシステム向けに規定) |
 | 学認IdP / 学認SP としての構成 | 学認Issuer は `openid_relying_party` メタデータを持つ学認SPとして NII 配下に登録。機関IdP・属性Provider は Issuer を、Issuer は IdP・属性Provider を、それぞれ Trust Chain で相互に確認 |
 | (追加) Wallet が Issuer を信頼する | Credential Offer の `credential_issuer` の Trust Chain を解決し、`openid_credential_issuer` として登録されていることを確認 |
 | (追加) Verifier が Issuer を信頼する | SD-JWT VC の `iss` の Trust Chain を解決し、フェデレーションメタデータ (`openid_credential_issuer.jwks`) の鍵でも署名を検証 |
@@ -62,6 +62,31 @@ OpenID Federation 部分は `src/federation/` (TypeScript) と `wallet-instance/
   (機関IdP は `RS256` も宣言しているが、解決後メタデータからは除去される。InCommon SP の Explorer で確認可能)
 - NII → 各リーフ: `federation_entity.contacts` に `add`、Issuer には `credential_configurations_supported` を `essential`、
   Wallet Provider には `attestation_signing_alg_values_supported` を `subset_of [ES256]`
+
+## Token Status List (draft-ietf-oauth-status-list)
+
+Status List は [draft-ietf-oauth-status-list](https://datatracker.ietf.org/doc/draft-ietf-oauth-status-list/) に従って実装しています。
+datatracker はこの環境から参照できないため、WG の編集版 (oauth-wg/draft-ietf-oauth-status-list, -21 相当) を参照しました。
+共通実装は `src/status-list/token-status-list.ts`、Holder 側 (Go) は `wallet-instance/statuslist.go` です。
+
+| 項目 (draft の節) | 実装 |
+| --- | --- |
+| Status List (4.1, 4.2) | `bits` = 2 (VALID / INVALID / SUSPENDED を表現)、4096 エントリ。LSB から詰めて DEFLATE + ZLIB (最高圧縮レベル) → base64url の `lst`。`aggregation_uri` 付き |
+| Status List Token (5.1) | JWT ヘッダ `typ: statuslist+jwt`、クレーム `sub` (= Status List の URI)、`iat`、`exp` (10 分)、`ttl` (既定 10 秒、`STATUS_LIST_TTL` で変更)、`status_list` |
+| Referenced Token (6.2) | SD-JWT VC の Issuer 署名部に `"status": {"status_list": {"idx": …, "uri": …}}` |
+| Status Types (7) | `0x00` VALID / `0x01` INVALID / `0x02` SUSPENDED。Issuer 管理画面から一時停止・再開・失効が可能 (INVALID は終端状態として Status Issuer が戻しを拒否)。`0x03`・`0x0C`-`0x0F` はアプリ固有として表示 |
+| Request / Response (8.1, 8.2) | `GET <uri>`、`Accept: application/statuslist+jwt` のコンテンツネゴシエーション (CWT のみ要求された場合は 406)、`Content-Type: application/statuslist+jwt`、CORS 許可 |
+| Validation Rules (8.3) | Referenced Token を先に検証 (vcknots) → `status`/`status_list`/`idx`/`uri` の検査 → 取得 (3xx 追従は上限付き) → `typ`・署名・必須クレーム (`sub`/`iat`/`status_list`) → `sub` = `uri`・`exp`・`ttl` → 伸長 → 範囲外 index は拒否 → Status Type 判定。VALID 以外は拒否 |
+| キャッシュ (13.7) | Verifier は取得から `ttl` 秒キャッシュ (下限 5 秒・上限 24 時間で丸め、`exp` 超過時は破棄) |
+| Historical Resolution (8.4) | `GET <uri>?time=<unix>` で、その時点で有効だった Status List Token を返す (`iat` ≦ time < `exp`)。範囲外は 404 |
+| Aggregation (9) | `GET /aggregation` → `{"status_lists": [...]}`。Issuer は OAuth AS メタデータ (と Federation の `oauth_authorization_server`) に `status_list_aggregation_endpoint` を公開 |
+| インデックス割当 (12.5, 13.2, 13.3) | 未使用インデックスからランダムに割当て、再利用しない。初期値は 0x00 (VALID) |
+| External Status Issuer (13.5) | Referenced Token の Issuer (学認Issuer) と Status Issuer (Status List) は別エンティティ。鍵と信頼は OpenID Federation で結び付け |
+
+テスト: `npm test` (draft の例と付録のテストベクタ 1/2/4/8-bit を TypeScript でデコード・往復検証)、
+`cd wallet-instance && go test ./...` (同じベクタを Go で検証)。
+
+![status list](docs/images/status-list.png)
 
 ## シーケンス
 
@@ -150,14 +175,15 @@ go build -o wallet-instance .
 
 ### 5. 失効・不正系の確認
 
-- 失効: <http://localhost:7020/admin> で「失効させる」→ 再提示すると Verifier で `Status List: INVALID` となり拒否
+- 一時停止 / 再開 / 失効: <http://localhost:7020/admin> で「一時停止 (SUSPENDED)」「再開 (VALID)」「失効 (INVALID)」→ 再提示すると Verifier が `SUSPENDED` / `INVALID` で拒否。
+  Verifier は Status List Token を `ttl` (既定 10 秒) キャッシュするため、反映まで最大 `ttl` 秒かかります。`./wallet-instance list` でも Holder 側から状態を確認できます
 - Verifier を信頼しない: <http://localhost:7031/> で Verifier を削除 → Wallet が提示を拒否 (Verifier 画面の「Trust List へ登録 / 再登録」で戻せます)
 - Wallet Attestation なし: `curl -X POST http://localhost:7020/token -d ...` は `invalid_client`
 - Wallet Instance 失効: <http://localhost:7030/> で失効 → 以後の Attestation 取得が拒否されます (発行済み Attestation は有効期限 1 時間まで有効)
 
 ### 一括デモ
 
-サーバー起動後に以下を実行すると、ログイン → 発行 → 提示 → 失効 → 再提示 (拒否) までを CLI だけで実行します。
+サーバー起動後に以下を実行すると、ログイン → 発行 → 提示 → 一時停止 (拒否) → 再開 (成功) → 失効 (拒否) までを CLI だけで実行します (ttl 待ちを含め約 40 秒)。
 
 ```bash
 ./scripts/demo.sh          # taro で実行
@@ -192,6 +218,6 @@ InCommon SP の Trust Chain Explorer (<http://localhost:7050/>) で、各エン�
   (Wallet Instance は未登録エラー時に自動で再登録し、Verifier は起動時に Trust List へ再登録します)
 - Federation: Trust Mark、`constraints`、Resolve endpoint、Historical keys は未実装。metadata_policy は主要オペレーター (value / add / default / one_of / subset_of / superset_of / essential) のみ
 - Entity Type `wallet_provider` / `trust_list_provider` / `status_list_provider` / `attribute_provider` と Trust List の形式 (`trust-list+jwt`) は本プロトタイプ独自
-- Wallet Provider は鍵アテステーション / アプリ完全性検証を行っていません。Status List の管理 API は共有シークレットで保護
+- Wallet Provider は鍵アテステーション / アプリ完全性検証を行っていません。Status List の管理 API (Issuer → Status Issuer) は共有シークレットで保護。Status List Token は JWT 形式のみ (CWT 形式は未対応)
 - Verifier 応答への Wallet Attestation 付与は OID4VP 標準の範囲外 (本シナリオ用の拡張)
 - Verifier は Trust List で信頼される前提のため Federation には参加していません。client_id は `x509_san_dns:localhost` (Verifier は 1 つ)

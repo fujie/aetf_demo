@@ -22,7 +22,9 @@ ${opts.refresh ? `<meta http-equiv="refresh" content="${opts.refresh}">` : ''}
   code, pre { background:#eff1f3; border-radius:4px; padding:2px 4px; font-size: 12px; }
   pre { padding:8px; overflow-x:auto; white-space: pre-wrap; word-break: break-all; }
   table { border-collapse: collapse; width:100%; font-size: 14px; }
-  td, th { border-bottom:1px solid #d0d7de; padding:6px; text-align:left; vertical-align: top; }
+  td, th { border-bottom:1px solid #d0d7de; padding:6px; text-align:left; vertical-align: top; overflow-wrap:anywhere; }
+  td code { word-break: break-all; }
+  section { overflow-x: auto; }
   button, .btn { background:var(--c); color:#fff; border:0; border-radius:6px; padding:8px 14px; cursor:pointer; font-size:14px; text-decoration:none; display:inline-block; }
   .ok { color:var(--ok); font-weight:bold; } .ng { color:var(--ng); font-weight:bold; }
   .mut { color:var(--mut); font-size: 13px; }

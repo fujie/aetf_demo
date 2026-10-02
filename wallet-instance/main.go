@@ -321,6 +321,12 @@ func (i *Instance) list() error {
 	for _, e := range entries {
 		fmt.Printf("\n- %s (%s, received %s)\n", e.Entry.Id, e.Entry.MimeType, e.Entry.ReceivedAt.Format("2006-01-02 15:04:05"))
 		printCredential(e.Entry.Raw)
+		payload, _ := decodeSDJWT(e.Entry.Raw)
+		if st, err := i.CheckStatus(payload); err != nil {
+			fmt.Printf("  %-24s ? (%v)\n", "[Token Status List]", err)
+		} else {
+			fmt.Printf("  %-24s %s (idx=%d, Status Issuer: %s)\n", "[Token Status List]", StatusTypeName(st.Status), st.Idx, strings.Join(st.ChainPath, " -> "))
+		}
 	}
 	return nil
 }

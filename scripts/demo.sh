@@ -39,9 +39,23 @@ REQ=$(curl -s -X POST -H 'Accept: application/json' "$VERIFIER/requests")
 "$WALLET" present "$(echo "$REQ" | json '["request_uri"]')"
 echo "Verifier result: $(curl -s -H 'Accept: application/json' "$(echo "$REQ" | json '["result_url"]')" | json '["status"]')"
 
-step "5. Issuer revokes the credential (Status List), presentation must now fail"
+TTL="${STATUS_LIST_TTL:-10}"
 CODE=$(curl -s "$ISSUER/admin" | grep -o 'name="code" value="[^"]*"' | tail -1 | sed 's/.*value="//;s/"$//')
-curl -s -o /dev/null -d "code=$CODE" "$ISSUER/admin/revoke"
-REQ=$(curl -s -X POST -H 'Accept: application/json' "$VERIFIER/requests")
-"$WALLET" present "$(echo "$REQ" | json '["request_uri"]')" || true
-echo "Verifier result: $(curl -s -H 'Accept: application/json' "$(echo "$REQ" | json '["result_url"]')" | json '["status"]')"
+set_status() { curl -s -o /dev/null -d "code=$CODE&status=$1" "$ISSUER/admin/status"; }
+present() {
+  local req; req=$(curl -s -X POST -H 'Accept: application/json' "$VERIFIER/requests")
+  "$WALLET" present "$(echo "$req" | json '["request_uri"]')" || true
+  echo "Verifier result: $(curl -s -H 'Accept: application/json' "$(echo "$req" | json '["result_url"]')" | json '["status"]')"
+}
+wait_ttl() { echo "(Status List Token ttl=${TTL}s: waiting for the Verifier cache to expire)"; sleep $((TTL + 1)); }
+
+step "5. Issuer suspends the credential (0x02 SUSPENDED) -> presentation is rejected"
+set_status 2; wait_ttl; present
+"$WALLET" list | grep 'Token Status List'
+
+step "6. Issuer reinstates the credential (0x00 VALID) -> presentation succeeds"
+set_status 0; wait_ttl; present
+
+step "7. Issuer revokes the credential (0x01 INVALID, terminal) -> presentation is rejected"
+set_status 1; wait_ttl; present
+"$WALLET" list | grep 'Token Status List'
