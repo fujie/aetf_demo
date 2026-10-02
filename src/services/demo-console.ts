@@ -1,8 +1,10 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
-import { ENTITY, WALLET_UI_URL } from '../config.js'
-import { esc } from '../common/html.js'
+import { ENTITY, ENTITY_LABELS, WALLET_UI_URL } from '../config.js'
+import { esc, page } from '../common/html.js'
 import { type DemoEvent, clearEvents, emit, eventsAfter } from '../common/events.js'
+import type { TrustAnchorConfig } from '../federation/resolver.js'
+import { TRUST_CHAIN_VIEW_CSS, resolveWithTrace, trustChainVisualHtml } from '../federation/trust-chain-view.js'
 
 type Box = {
   key: string
@@ -130,8 +132,8 @@ const scenario = () => {
     },
     {
       t: '信頼チェーンを調べる',
-      d: 'I2 (InCommon) 配下の InCommon SP から、学認側エンティティの Trust Chain・metadata_policy 適用後のメタデータを確認できます (eduGAIN 経由のフェデレーション間信頼)。',
-      b: [btn(ENTITY.incommonSp, 'Trust Chain Explorer')],
+      d: 'Trust Chain Visualizer で、任意のエンティティについて Entity Configuration / Subordinate Statement の取得と署名検証の流れ、Trust Chain 配列、metadata_policy の適用結果を図で確認できます。InCommon SP の Explorer では I2 (InCommon) 側から見た学認エンティティの解決 (eduGAIN 経由のフェデレーション間信頼) を確認できます。Verifier はフェデレーション外なので解決に失敗する例になります。',
+      b: [btn('/trust-chain', 'Trust Chain Visualizer'), btn(ENTITY.incommonSp, 'InCommon SP Explorer')],
     },
   ]
   return steps
@@ -178,7 +180,7 @@ ol.sc{list-style:none;margin:0;padding:0}ol.sc li{display:flex;gap:12px;padding:
 .ev-d{color:var(--mut);font-size:12px;word-break:break-all;margin-left:2px}
 .empty{color:var(--mut);font-size:13px}
 </style></head><body>
-<header><h1>学認 IHV プロトタイプ デモコンソール</h1><span class="mut">OpenID Federation × vcknots (OID4VCI / OID4VP) × ETSI TS 119 602 × Token Status List</span></header>
+<header><h1>学認 IHV プロトタイプ デモコンソール</h1><span class="mut">OpenID Federation × vcknots (OID4VCI / OID4VP) × ETSI TS 119 602 × Token Status List</span><a href="/trust-chain" target="_blank" style="color:#fff;margin-left:auto;font-size:14px">🔗 Trust Chain Visualizer</a></header>
 <div class="wrap">
  <div>
   <div class="panel"><h2>構成 (クリックで各エンティティの画面を開きます / ●は稼働状態)</h2>${diagramSvg()}</div>
@@ -220,10 +222,29 @@ poll(); health()
 </script></body></html>`
 
 /** Demo console: architecture diagram with live status, guided scenario and event timeline. */
-export const createDemoConsole = () => {
+export const createDemoConsole = (opts: { anchors: TrustAnchorConfig[] }) => {
   const app = new Hono()
   app.use('/api/*', cors({ origin: '*' }))
   app.get('/', (c) => c.html(pageHtml()))
+  /** Trust Chain Visualizer: resolves a trust chain with tracing and draws it. */
+  app.get('/trust-chain', async (c) => {
+    const target = c.req.query('entity') ?? ENTITY.issuer
+    const anchorId = opts.anchors[0]?.entityId
+    const options = Object.entries(ENTITY_LABELS)
+      .filter(([id]) => id !== anchorId)
+      .map(([id, name]) => `<option value="${esc(id)}" ${id === target ? 'selected' : ''}>${esc(name)} — ${esc(id)}</option>`)
+      .join('')
+    const traced = await resolveWithTrace(target, opts.anchors)
+    return c.html(
+      page(
+        'Trust Chain Visualizer',
+        `<style>main{max-width:1280px}${TRUST_CHAIN_VIEW_CSS}</style>
+        <section><form method="get">解決するエンティティ: <select name="entity">${options}</select> <button>Trust Chain を解決</button></form>
+        <p class="mut">Trust Anchor: <code>${esc(anchorId)}</code> (公開鍵は事前設定)。OpenID Federation 1.0 の手順でボトムアップに Trust Chain を構築・検証し、その過程をトレースして描画します (キャッシュは使いません)。</p></section>
+        ${trustChainVisualHtml(target, traced, ENTITY_LABELS)}`
+      )
+    )
+  })
   app.get('/api/events', (c) => c.json(eventsAfter(Number(c.req.query('after') ?? 0))))
   app.delete('/api/events', (c) => {
     clearEvents()

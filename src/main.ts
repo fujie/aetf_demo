@@ -229,7 +229,7 @@ const main = async () => {
     )
   )
 
-  const demoConsole = createDemoConsole()
+  const demoConsole = createDemoConsole({ anchors })
   await new Promise<void>((resolve) => listen(demoConsole.app, DEMO_CONSOLE_PORT, () => resolve()))
   console.log(`  ${'Demo Console'.padEnd(30)} ${DEMO_CONSOLE_URL}`)
 

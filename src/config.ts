@@ -31,6 +31,22 @@ export const ENTITY = Object.fromEntries(
   Object.entries(PORTS).map(([k, port]) => [k, url(port)])
 ) as Record<keyof typeof PORTS, string>
 
+/** Display names of the entities (diagrams). */
+export const ENTITY_LABELS: Record<string, string> = {
+  [ENTITY.trustAnchor]: 'eduGAIN (TA)',
+  [ENTITY.nii]: 'NII',
+  [ENTITY.i2]: 'I2',
+  [ENTITY.idp]: '機関IdP',
+  [ENTITY.attributeProvider]: '属性Provider',
+  [ENTITY.issuer]: '学認Issuer',
+  [ENTITY.gakuninSp]: '学認SP',
+  [ENTITY.walletProvider]: 'Wallet Provider',
+  [ENTITY.trustList]: 'Trust List',
+  [ENTITY.statusList]: 'Status List',
+  [ENTITY.verifier]: 'Verifier',
+  [ENTITY.incommonSp]: 'InCommon SP',
+}
+
 /** Credential configuration issued by the 学認Issuer. */
 export const CREDENTIAL_CONFIGURATION_ID = 'GakuninStudentCredential'
 export const CREDENTIAL_VCT = `${ENTITY.issuer}/vct/GakuninStudentCredential`

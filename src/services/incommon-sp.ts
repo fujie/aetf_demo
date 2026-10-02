@@ -1,9 +1,11 @@
 import { Hono } from 'hono'
 import type { SigningKey } from '../common/keys.js'
 import { jwksOf } from '../common/keys.js'
-import { esc, page, trustChainHtml } from '../common/html.js'
+import { ENTITY_LABELS } from '../config.js'
+import { esc, page } from '../common/html.js'
 import { createFederationEntity, mountFederationEndpoints } from '../federation/entity.js'
-import { type TrustAnchorConfig, resolveTrustChain } from '../federation/resolver.js'
+import type { TrustAnchorConfig } from '../federation/resolver.js'
+import { TRUST_CHAIN_VIEW_CSS, resolveWithTrace, trustChainVisualHtml } from '../federation/trust-chain-view.js'
 import { mountFederatedLogin } from './sp.js'
 
 /**
@@ -54,13 +56,11 @@ export const createIncommonSp = (opts: {
     const target = c.req.query('entity')
     let result = ''
     if (target) {
-      try {
-        const chain = await resolveTrustChain(target, opts.anchors, { noCache: true })
-        result = `<section><h3 class="ok">Trust Chain 検証成功</h3><p>${trustChainHtml(chain.path)}</p>
-          <h4>Resolved metadata (metadata_policy 適用後)</h4><pre>${esc(JSON.stringify(chain.metadata, null, 2))}</pre>
-          <h4>Trust Chain (JWT)</h4><pre>${esc(chain.chain.join('\n\n'))}</pre></section>`
-      } catch (e) {
-        result = `<section><h3 class="ng">Trust Chain 検証失敗</h3><pre>${esc((e as Error).message)}</pre></section>`
+      const traced = await resolveWithTrace(target, opts.anchors)
+      result = `<style>main{max-width:1280px}${TRUST_CHAIN_VIEW_CSS}</style>${trustChainVisualHtml(target, traced, ENTITY_LABELS)}`
+      if (traced.result) {
+        result += `<section><h4>Resolved metadata (metadata_policy 適用後)</h4><pre>${esc(JSON.stringify(traced.result.metadata, null, 2))}</pre>
+          <details><summary>Trust Chain (JWT)</summary><pre>${esc(traced.result.chain.join('\n\n'))}</pre></details></section>`
       }
     }
     const options = opts.knownEntities

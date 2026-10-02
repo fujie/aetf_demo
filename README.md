@@ -25,6 +25,7 @@ npm run demo        # 全エンティティ + Web Wallet (Go) を起動。Go 1.2
 | 画面 | URL | 内容 |
 | --- | --- | --- |
 | デモコンソール | <http://localhost:8790> | 図と同じ構成図 (クリックで各画面へ・稼働状態表示)、手順ガイド、全エンティティの処理がリアルタイムに流れるタイムライン |
+| Trust Chain Visualizer | <http://localhost:8790/trust-chain> | 任意のエンティティの Trust Chain 解決を図で表示 ([下記](#trust-chain-の可視化)) |
 | Web Wallet | <http://localhost:8760> | スマートフォン風のウォレット。登録、受け取り (Issuer の信頼チェーン確認)、提示 (Verifier 認証と開示する属性の選択)、カードごとの状態 (VALID / SUSPENDED / INVALID) |
 | 学認SP (通常のSP) | <http://localhost:8725> | 機関IdP でログインし、受け取った属性 (所属種別) でアクセス制御 |
 | InCommon SP | <http://localhost:8750> | 学認の機関IdP で eduGAIN 経由ログイン (フェデレーション間連携)、Trust Chain Explorer |
@@ -45,7 +46,7 @@ Issuer の Offer 画面と Verifier のリクエスト画面にある **「Web W
 5. Trust List で Verifier を一時停止 → ウォレットが Verifier を拒否 (アクセス証明書が CRL で失効)
 6. Wallet Provider で Wallet Instance を一時停止 / 失効 → 約 10 秒後から Issuer・Verifier が Wallet Attestation を拒否 (発行・提示ができなくなる)。「再有効化」で復帰
 7. 学認SP と InCommon SP に機関IdPでログイン (InCommon SP には eduGAIN 経由で最小限の属性のみ送信)
-8. InCommon SP の Trust Chain Explorer で信頼チェーンを確認
+8. Trust Chain Visualizer (または InCommon SP の Trust Chain Explorer) で信頼チェーンの解決過程を図で確認
 
 補足:
 
@@ -110,9 +111,26 @@ OpenID Federation 部分は `src/federation/` (TypeScript) と `wallet-instance/
 ### metadata_policy の例
 
 - eduGAIN → NII / I2: `openid_provider.id_token_signing_alg_values_supported` を `subset_of [ES256, ES384, PS256]` に制限
-  (機関IdP は `RS256` も宣言しているが、解決後メタデータからは除去される。InCommon SP の Explorer で確認可能)
+  (機関IdP は `RS256` も宣言しているが、解決後メタデータからは除去される。Trust Chain Visualizer の「metadata_policy の適用」で確認可能)
 - NII → 各リーフ: `federation_entity.contacts` に `add`、Issuer には `credential_configurations_supported` を `essential`、
   Wallet Provider には `attestation_signing_alg_values_supported` を `subset_of [ES256]`
+
+## Trust Chain の可視化
+
+デモコンソールの **Trust Chain Visualizer** (<http://localhost:8790/trust-chain>) と InCommon SP の Trust Chain Explorer では、
+選んだエンティティの Trust Chain 解決 (OpenID Federation 1.0) を実際に実行し、その過程をトレースして図にします
+(`src/federation/resolver.ts` の `trace` オプション、描画は `src/federation/trust-chain-view.ts`)。
+
+1. **フェデレーション上の解決経路**: Leaf → Intermediate → Trust Anchor を縦に並べ、各エンティティの Entity Configuration (自己署名)、
+   上位が発行した Subordinate Statement、`authority_hints` (破線)、「どの jwks でどのステートメントを検証したか」を矢印で表示。
+   最上位は事前設定された Trust Anchor 公開鍵で検証。成功は緑、失敗は赤、番号は下の解決ステップに対応
+2. **Trust Chain (JWT 配列)**: `[Leaf EC, SS…, TA EC]` を並べ、`[i]` の署名鍵が `[i+1].jwks` に含まれる関係と、チェーンの有効期限 (exp の最小値) を表示。各 JWT はデコード表示可能
+3. **解決ステップ**: HTTP 取得 (`/.well-known/openid-federation`、`/fetch?sub=`) と署名検証を実行順に表示 (失敗時はエラー箇所が赤)
+4. **metadata_policy の適用**: Leaf のメタデータ、TA から順にマージされた各上位の policy、Resolved Metadata をパラメータごとに比較し、変更箇所を強調
+
+Verifier はフェデレーションに属さない (Trust List で信頼される) ため、選ぶと Entity Configuration の取得で失敗する例になります。
+
+![trust chain visualizer](docs/images/trust-chain-visualizer.png)
 
 ## Trust List (ETSI TS 119 602 / TS 119 411-8)
 
@@ -278,7 +296,7 @@ go build -o wallet-instance .
 | --- | --- |
 | ![issuer](docs/images/issuer.png) | ![verifier](docs/images/vresult.png) |
 
-InCommon SP の Trust Chain Explorer (<http://localhost:8750/>) で、各エンティティの Trust Chain・metadata_policy 適用後のメタデータ・JWT を確認できます。
+Trust Chain Visualizer (<http://localhost:8790/trust-chain>) や InCommon SP の Trust Chain Explorer (<http://localhost:8750/>) で、各エンティティの Trust Chain の解決過程・metadata_policy 適用後のメタデータ・JWT を図で確認できます。
 
 ## vcknots の利用箇所と補足
 
