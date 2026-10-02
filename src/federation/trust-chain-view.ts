@@ -164,7 +164,7 @@ const diagramSvg = (model: Model, leafId: string, path: Set<string>, label: (id:
     const n = ev && steps.get(ev)
     const pad = n ? 22 : 10
     return `<g><rect x="${x}" y="${y}" width="${text.length * 11 + 10 + pad}" height="20" rx="10" fill="${COLORS[st]}"/>${
-      n ? `<circle cx="${x + 10}" cy="${y + 10}" r="9" fill="#fff"/><text x="${x + 10}" y="${y + 14}" class="snb" fill="${COLORS[st]}">${n}</text>` : ''
+      n ? `<circle cx="${x + 10}" cy="${y + 10}" r="10" class="sn" stroke="#fff" stroke-width="1.5"/><text x="${x + 10}" y="${y + 14}" class="snt">${n}</text>` : ''
     }<text x="${x + pad}" y="${y + 14}" class="bd">${esc(text)}</text></g>`
   }
   const lines = (x: number, y: number, rows: [string, string?][]) =>
@@ -408,7 +408,7 @@ export const TRUST_CHAIN_VIEW_CSS = `
 .tcv-svg .ech{fill:#155e86}.tcv-svg .ssh{fill:#8250df}.tcv-svg .ht{fill:#fff;font-size:13px;font-weight:700}.tcv-svg .hs{fill:#dbe9f2;font-size:10px;text-anchor:end}
 .tcv-svg .tx{font-size:12.5px;fill:#1f2328}.tcv-svg .tng{font-size:12px;fill:#cf222e}.tcv-svg .tmut{font-size:12px;fill:#8c959f}
 .tcv-svg .bd{font-size:11.5px;fill:#fff;font-weight:700}.tcv-svg .al{font-size:11.5px;text-anchor:middle;font-weight:700}
-.tcv-svg .sn{fill:#1f2328}.tcv-svg .snb{font-size:11px;text-anchor:middle;font-weight:700}.tcv-svg .ft{font-size:15px;font-weight:700}.tcv-svg .snt{fill:#fff;font-size:11px;text-anchor:middle;font-weight:700}
+.tcv-svg .sn{fill:#1f2328}.tcv-svg .ft{font-size:15px;font-weight:700}.tcv-svg .snt{fill:#fff;font-size:11px;text-anchor:middle;font-weight:700}
 .tcv-svg .key{fill:#fff4d6;stroke:#bf8700}.tcv-svg .kt{font-size:12px;text-anchor:middle;fill:#7d4e00}
 .tcv-legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:#57606a;margin:6px 0 0}
 .tcv-legend i{display:inline-block;width:14px;height:10px;border-radius:2px;margin-right:4px;vertical-align:middle}
