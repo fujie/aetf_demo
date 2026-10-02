@@ -5,6 +5,7 @@ import { esc, page } from '../common/html.js'
 import { type DemoEvent, clearEvents, emit, eventsAfter } from '../common/events.js'
 import type { TrustAnchorConfig } from '../federation/resolver.js'
 import { TRUST_CHAIN_VIEW_CSS, resolveWithTrace, trustChainVisualHtml } from '../federation/trust-chain-view.js'
+import { TRUST_MAP_CSS, trustMapBody } from './trust-map.js'
 
 type Box = {
   key: string
@@ -132,8 +133,8 @@ const scenario = () => {
     },
     {
       t: '信頼チェーンを調べる',
-      d: 'Trust Chain Visualizer で、任意のエンティティについて Entity Configuration / Subordinate Statement の取得と署名検証の流れ、Trust Chain 配列、metadata_policy の適用結果を図で確認できます。InCommon SP の Explorer では I2 (InCommon) 側から見た学認エンティティの解決 (eduGAIN 経由のフェデレーション間信頼) を確認できます。Verifier はフェデレーション外なので解決に失敗する例になります。',
-      b: [btn('/trust-chain', 'Trust Chain Visualizer'), btn(ENTITY.incommonSp, 'InCommon SP Explorer')],
+      d: '信頼検証マップで「どのエンティティがどのエンティティを、どの方法 (Federation / Trust List / Wallet Attestation) で検証しているか」を一覧できます。Trust Chain Visualizer では、任意のエンティティについて Entity Configuration / Subordinate Statement の取得と署名検証の流れ、Trust Chain 配列、metadata_policy の適用結果を図で確認できます。InCommon SP の Explorer では I2 (InCommon) 側から見た学認エンティティの解決 (eduGAIN 経由のフェデレーション間信頼) を確認できます。Verifier はフェデレーション外なので解決に失敗する例になります。',
+      b: [btn('/trust-map', '信頼検証マップ'), btn('/trust-chain', 'Trust Chain Visualizer'), btn(ENTITY.incommonSp, 'InCommon SP Explorer')],
     },
   ]
   return steps
@@ -180,7 +181,7 @@ ol.sc{list-style:none;margin:0;padding:0}ol.sc li{display:flex;gap:12px;padding:
 .ev-d{color:var(--mut);font-size:12px;word-break:break-all;margin-left:2px}
 .empty{color:var(--mut);font-size:13px}
 </style></head><body>
-<header><h1>学認 IHV プロトタイプ デモコンソール</h1><span class="mut">OpenID Federation × vcknots (OID4VCI / OID4VP) × ETSI TS 119 602 × Token Status List</span><a href="/trust-chain" target="_blank" style="color:#fff;margin-left:auto;font-size:14px">🔗 Trust Chain Visualizer</a></header>
+<header><h1>学認 IHV プロトタイプ デモコンソール</h1><span class="mut">OpenID Federation × vcknots (OID4VCI / OID4VP) × ETSI TS 119 602 × Token Status List</span><a href="/trust-map" target="_blank" style="color:#fff;margin-left:auto;font-size:14px">🧭 信頼検証マップ</a><a href="/trust-chain" target="_blank" style="color:#fff;font-size:14px">🔗 Trust Chain Visualizer</a></header>
 <div class="wrap">
  <div>
   <div class="panel"><h2>構成 (クリックで各エンティティの画面を開きます / ●は稼働状態)</h2>${diagramSvg()}</div>
@@ -226,6 +227,10 @@ export const createDemoConsole = (opts: { anchors: TrustAnchorConfig[] }) => {
   const app = new Hono()
   app.use('/api/*', cors({ origin: '*' }))
   app.get('/', (c) => c.html(pageHtml()))
+  /** Trust map: who verifies whom, and how. */
+  app.get('/trust-map', (c) =>
+    c.html(page('信頼検証マップ', `<style>${TRUST_MAP_CSS}</style>${trustMapBody()}`))
+  )
   /** Trust Chain Visualizer: resolves a trust chain with tracing and draws it. */
   app.get('/trust-chain', async (c) => {
     const target = c.req.query('entity') ?? ENTITY.issuer

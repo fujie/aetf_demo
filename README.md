@@ -25,6 +25,7 @@ npm run demo        # 全エンティティ + Web Wallet (Go) を起動。Go 1.2
 | 画面 | URL | 内容 |
 | --- | --- | --- |
 | デモコンソール | <http://localhost:8790> | 図と同じ構成図 (クリックで各画面へ・稼働状態表示)、手順ガイド、全エンティティの処理がリアルタイムに流れるタイムライン |
+| 信頼検証マップ | <http://localhost:8790/trust-map> | どのエンティティがどのエンティティを、どの方法で検証しているかの図と一覧 ([下記](#信頼検証マップ-誰が誰をどう検証しているか)) |
 | Trust Chain Visualizer | <http://localhost:8790/trust-chain> | 任意のエンティティの Trust Chain 解決を図で表示 ([下記](#trust-chain-の可視化)) |
 | Web Wallet | <http://localhost:8760> | スマートフォン風のウォレット。登録、受け取り (Issuer の信頼チェーン確認)、提示 (Verifier 認証と開示する属性の選択)、カードごとの状態 (VALID / SUSPENDED / INVALID) |
 | 学認SP (通常のSP) | <http://localhost:8725> | 機関IdP でログインし、受け取った属性 (所属種別) でアクセス制御 |
@@ -114,6 +115,25 @@ OpenID Federation 部分は `src/federation/` (TypeScript) と `wallet-instance/
   (機関IdP は `RS256` も宣言しているが、解決後メタデータからは除去される。Trust Chain Visualizer の「metadata_policy の適用」で確認可能)
 - NII → 各リーフ: `federation_entity.contacts` に `add`、Issuer には `credential_configurations_supported` を `essential`、
   Wallet Provider には `attestation_signing_alg_values_supported` を `subset_of [ES256]`
+
+## 信頼検証マップ (誰が誰をどう検証しているか)
+
+デモコンソールの **信頼検証マップ** (<http://localhost:8790/trust-map>) は、プロトタイプ内で行われる全ての信頼判断を
+「検証する側 → 検証される側」の矢印で示します (定義は `src/services/trust-map.ts`)。
+
+- **青 = OpenID Federation**: 相手の Entity ID から eduGAIN Trust Anchor (公開鍵は全エンティティに事前設定) まで Trust Chain を解決し、
+  metadata_policy 適用後のメタデータのうち、決まった entity type (例: Wallet → Issuer は `openid_credential_issuer`) の鍵やエンドポイントを使う
+- **赤 = Trust List**: Wallet → Verifier。Verifier はフェデレーション外なので、Trust List の LoTE (ETSI TS 119 602) から得た Access CA で
+  アクセス証明書 (ETSI TS 119 411-8) を検証 (Trust List 自体は Federation で確認)
+- **紫 = Wallet Attestation**: Issuer / Verifier → Wallet Instance。Wallet Provider が発行した Attestation と PoP、Status List で確認
+  (Wallet Provider 自体は Federation で確認)
+
+エンティティをクリックすると、そのエンティティが検証する矢印 (実線) と検証される矢印 (破線) だけを表示します。
+下の一覧には各検証の「いつ・何を確認するか・実装箇所」と、相手の Trust Chain を [Trust Chain Visualizer](#trust-chain-の可視化) で見るリンクがあります。
+
+| 全体 | Wallet Instance を選択 |
+| --- | --- |
+| ![trust map](docs/images/trust-map.png) | ![trust map wallet](docs/images/trust-map-wallet.png) |
 
 ## Trust Chain の可視化
 
