@@ -1,0 +1,5 @@
+node_modules/
+.data/
+wallet-instance/.wallet/
+wallet-instance/wallet-instance
+*.log
