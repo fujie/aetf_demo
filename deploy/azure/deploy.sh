@@ -15,6 +15,9 @@
 # Usage: deploy/azure/deploy.sh            (settings via environment variables below)
 set -euo pipefail
 
+# Silence notices such as "behavior of this command has been altered by the following extension"
+export AZURE_CORE_ONLY_SHOW_ERRORS=true
+
 PREFIX="${PREFIX:-aetf}"                      # app name prefix (lowercase letters, digits, '-')
 RESOURCE_GROUP="${RESOURCE_GROUP:-${PREFIX}-demo-rg}"
 LOCATION="${LOCATION:-japaneast}"

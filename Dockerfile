@@ -15,7 +15,9 @@ RUN CGO_ENABLED=0 GOEXPERIMENT=nosystemcrypto go build -trimpath -o /out/wallet-
 FROM mcr.microsoft.com/devcontainers/javascript-node:22-bookworm AS node
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci && npm cache clean --force
+# the npm cache stays in this build stage, so no cache clean is needed
+ENV NPM_CONFIG_UPDATE_NOTIFIER=false NPM_CONFIG_FUND=false
+RUN npm ci
 
 FROM mcr.microsoft.com/mirror/docker/library/debian:bookworm-slim
 WORKDIR /app

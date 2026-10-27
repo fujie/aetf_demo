@@ -27,5 +27,8 @@
     "ajv-formats": "^3.0.1",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2"
+  },
+  "overrides": {
+    "zod": "4.6.7"
   }
 }
