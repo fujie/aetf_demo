@@ -64,6 +64,7 @@ Demo flow (same as the "Demo scenario" on the console):
 7. Log in to the GakuNin SP and the InCommon SP with the Institution IdP (the InCommon SP gets only a minimal attribute set via eduGAIN)
 8. Look at the trust chain resolution in the Trust Chain Visualizer
 9. Break trust relationships in Federation settings and see issuance, presentation and login being rejected ("Restore everything" recovers)
+10. Turn on "Demo: unregistered wallet" in the Web Wallet → the Issuer refuses to issue and the Verifier rejects the presentation. "Create a request signed with a certificate not in the Trust List" at the Verifier → the wallet warns and presents only if you agree
 
 Notes:
 
@@ -115,10 +116,10 @@ The OpenID Federation code is in `src/federation/` (TypeScript) and `wallet-inst
 
 | Scenario | Implementation |
 | --- | --- |
-| To trust the wallet, the Issuer / Verifier verify the Wallet Attestation presented by the Wallet Instance with the Wallet Provider's public key | The Wallet Instance adds `OAuth-Client-Attestation` / `OAuth-Client-Attestation-PoP` headers (draft-ietf-oauth-attestation-based-client-auth) to the OID4VCI token request and the OID4VP direct_post. They are verified at the Issuer's `/token` and the Verifier's `/callback` (`src/common/wallet-attestation.ts`) |
+| To trust the wallet, the Issuer / Verifier verify the Wallet Attestation presented by the Wallet Instance with the Wallet Provider's public key | The Wallet Instance adds `OAuth-Client-Attestation` / `OAuth-Client-Attestation-PoP` headers (draft-ietf-oauth-attestation-based-client-auth) to the OID4VCI token request and the OID4VP direct_post. They are verified at the Issuer's `/token` and the Verifier's `/callback` (`src/common/wallet-attestation.ts`). The Issuer verifies the attestation and PoP again when issuing (`/credentials`) and requires the same Wallet Instance that obtained the token. Wallets that cannot be verified (not registered with a Wallet Provider) get no credential, and the Verifier rejects their presentations |
 | The Wallet Provider itself is validated through OpenID Federation (there may be several Wallet Providers) | The Trust Chain of the attestation `iss` is resolved and the signature is verified with the `jwks` of the `wallet_provider` metadata. No Wallet Provider is hard-wired: any Wallet Provider chaining up to the Trust Anchor is accepted |
 | (extra) Suspending, revoking and reactivating a Wallet Instance | The Wallet Provider puts a Token Status List reference (`status.status_list`) into the Wallet Attestation (like EUDI Wallet Unit Attestations), set to SUSPENDED when suspended and INVALID when revoked. Reactivating a suspended instance sets the same entry back to VALID; since INVALID is final, reactivating a revoked instance allocates a new entry for later attestations (earlier attestations stay invalid). The Issuer and the Verifier check the status when verifying the attestation; the wallet checks its attestation's status before use and fetches a new one if needed |
-| To trust the Verifier, the wallet consults the Trust List | Following EUDI ARF 6.6.3.2, the wallet takes the Access CA trust anchors from the WRPAC Providers LoTE (ETSI TS 119 602) and checks the profile and the path of the access certificate (ETSI TS 119 411-8) the Verifier put in the Request Object `x5c`. The trust anchors are passed to **vcknots `X509TrustChainRoots`**, which also verifies the signature, the path and revocation via the CRL (`wallet-instance/trustlist.go`) |
+| To trust the Verifier, the wallet consults the Trust List | Following EUDI ARF 6.6.3.2, the wallet takes the Access CA trust anchors from the WRPAC Providers LoTE (ETSI TS 119 602) and checks the profile and the path of the access certificate (ETSI TS 119 411-8) the Verifier put in the Request Object `x5c`. The trust anchors are passed to **vcknots `X509TrustChainRoots`**, which also verifies the signature, the path and revocation via the CRL (`wallet-instance/trustlist.go`). For a **Verifier that is not in the Trust List** (its access certificate does not chain to an Access CA of the LoTE, or is not a WRPAC) the wallet shows a warning and presents only if the user agrees ("present anyway"); for that request only, the certificate in x5c itself is trusted to verify the signature. Invalid request signatures, a client_id not matching the certificate and certificates revoked via the CRL (Verifiers suspended at the Registrar) are still refused |
 | The Trust List itself is validated through OpenID Federation | The Trust Chain of the Trust List provider (LoTE Scheme Operator) is resolved to obtain the LoTE location (`lote_locations`) and signing key (`jwks`). The LoTE's JAdES signature is verified after checking that its `x5c` certificate key matches this key |
 | The Verifier checks credential revocation at the Status List | On issuance the Issuer allocates an index at the Status List and embeds `status.status_list` (`idx`, `uri`) in the (non-disclosable part of the) SD-JWT VC. The Verifier fetches and validates the Status List Token following the draft's Validation Rules and decides VALID / INVALID / SUSPENDED ([below](#token-status-list-draft-ietf-oauth-status-list)) |
 | The Status List itself is validated through OpenID Federation | The Trust Chain of the Status List Token `iss` (Status Issuer) is resolved and the signature is verified with `status_list_provider.jwks` (this defines the draft's Key Resolution and Trust Management for this ecosystem) |
@@ -333,6 +334,8 @@ WALLET_LANG=en ./wallet-instance list   # CLI output in English
 ./wallet-instance present 'openid4vp:?client_id=x509_san_dns%3Alocalhost&request_uri=...'
 # to choose the disclosed claims (default: the claims requested with DCQL)
 ./wallet-instance present '<uri>' --claims given_name,enrollment_status
+# presenting to a Verifier that is not in the Trust List must be explicit (otherwise the wallet warns and stops)
+./wallet-instance present '<uri>' --allow-untrusted
 ```
 
 ### 5. Revocation and failure cases
@@ -340,6 +343,8 @@ WALLET_LANG=en ./wallet-instance list   # CLI output in English
 - Suspend / reinstate / revoke: on <http://localhost:8720/admin> use "Suspend (SUSPENDED)", "Reinstate (VALID)", "Revoke (INVALID)" → presenting again is rejected by the Verifier with `SUSPENDED` / `INVALID`.
   The Verifier caches the Status List Token for `ttl` (default 10 s), so it can take up to `ttl` seconds. `./wallet-instance list` shows the status from the holder side too
 - Suspending the Verifier: on <http://localhost:8731/> "Suspend" (certificateHold) or "Cancel registration" (cessationOfOperation) → the access certificate is revoked via the CRL and the wallet refuses to present. "Resume" restores it; after cancelling, "Register / re-register at the Registrar" on the Verifier page issues a new access certificate
+- Verifier not in the Trust List: "Create a request signed with a certificate not in the Trust List" on <http://localhost:8740/> (signed with a self-signed certificate) → the Web Wallet shows a warning and "Present" stays disabled until you tick the consent checkbox; the CLI presents only with `--allow-untrusted`
+- Unregistered wallet: turn on "Demo: unregistered wallet" in the Web Wallet (no Wallet Attestation is sent) → the Issuer's `/token` answers `invalid_client`, the Verifier rejects with `Wallet Attestation`
 - No Wallet Attestation: `curl -X POST http://localhost:8720/token -d ...` gives `invalid_client`
 - Suspend / revoke / reactivate the Wallet Instance on <http://localhost:8730/> → the Status List entry referenced by the Wallet Attestation becomes SUSPENDED / INVALID and the Issuer and the Verifier reject it (after the ~10 s ttl). "Reactivate" restores it (from revoked, attestations are re-issued with a new entry)
 
@@ -423,7 +428,7 @@ Notes:
 - The LoTE type and service type URIs are the ETSI ones for EU WRPAC Providers (`SchemeTerritory` is `JP`). The Registrar, Access CA and LoTE Provider would normally be separate parties but are combined in one entity
 - The Registrar does not verify RP identities and approves automatically. Registration certificates (WRPRC), the wallet-side check that requested attributes are within the registration, OCSP and ETSI TS 119 612 (XML Trusted List / LOTL) are not implemented
 - The Wallet Provider does not verify key attestation / app integrity. The Status List management API (Issuer → Status Issuer) is protected with a shared secret. Status List Tokens are JWT only (no CWT)
-- Adding a Wallet Attestation to the Verifier response is outside the OID4VP standard (an extension for this scenario)
+- Adding a Wallet Attestation to the Verifier response and to the credential request is outside the standards (attestation-based client authentication is defined for client authentication at the authorization server; an extension for this scenario)
 - The Verifier is trusted through the Trust List (access certificate) and does not join the federation. client_id is `x509_san_dns:localhost` (a single Verifier)
 - Demo user data (names, departments) and the Japanese entries of the protocol metadata (`display` with `locale: ja-JP`) stay in Japanese in the English UI
 

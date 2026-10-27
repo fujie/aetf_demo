@@ -4,6 +4,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -263,6 +264,15 @@ func (i *Instance) AcceptOffer(p *OfferPreview) (*wallet.SavedCredential, error)
 	if err := i.EnsureAttestation(); err != nil {
 		return nil, err
 	}
+	// the Issuer verifies the Wallet Attestation again at its credential endpoint
+	if raw, err := fetchText(strings.TrimSuffix(p.Issuer, "/") + "/.well-known/openid-credential-issuer"); err == nil {
+		var md struct {
+			CredentialEndpoint string `json:"credential_endpoint"`
+		}
+		if json.Unmarshal([]byte(raw), &md) == nil && md.CredentialEndpoint != "" {
+			i.credentialEndpoints.Store(md.CredentialEndpoint, true)
+		}
+	}
 	installAttestationTransport(i)
 	w, err := i.newWallet(nil)
 	if err != nil {
@@ -295,6 +305,9 @@ type PresentationPrep struct {
 	ClaimOrder     []string // requested claims first, then the other disclosable ones
 	Credential     *CredentialView
 	CreatedAt      time.Time
+	// Untrusted is set (with the reason) when the Verifier is not in the Trust List: the wallet
+	// presents only after the user explicitly accepts the risk.
+	Untrusted string
 }
 
 // PreparePresentation authenticates the Relying Party (LoTE + access certificate) and works out
@@ -332,13 +345,23 @@ func (i *Instance) PreparePresentation(requestURI string) (*PresentationPrep, er
 	}
 
 	// 3. Relying Party authentication with its access certificate (ETSI TS 119 411-8)
+	untrusted := ""
 	rp, err := lote.AuthenticateRelyingParty(requestObject, clientID)
-	if err != nil {
+	var notListed *UntrustedRPError
+	switch {
+	case errors.As(err, &notListed):
+		// well-formed request signed by the certificate's key, but the Verifier is not in the Trust
+		// List: warn and let the user decide (see SubmitPresentation)
+		untrusted = notListed.Reason.Error()
+		i.warn(M("Verifier は Trust List に掲載されていません", "The Verifier is not in the Trust List"),
+			M(fmt.Sprintf("%s (%s): %s", rp.CommonName, clientID, untrusted), fmt.Sprintf("%s (%s): %s", rp.CommonName, clientID, untrusted)))
+	case err != nil:
 		return nil, i.fail(M("Relying Party を認証できません", "Cannot authenticate the Relying Party"), err)
+	default:
+		i.ok(M("アクセス証明書 (WRPAC) を LoTE のトラストアンカーまで検証", "Validated the access certificate (WRPAC) up to the LoTE trust anchor"),
+			M(fmt.Sprintf("%s / %s (%s), policy %s, 発行 %s", rp.Organization, rp.CommonName, rp.OrganizationIdentifier, rp.Policy, rp.AccessCA),
+				fmt.Sprintf("%s / %s (%s), policy %s, issued by %s", rp.Organization, rp.CommonName, rp.OrganizationIdentifier, rp.Policy, rp.AccessCA)))
 	}
-	i.ok(M("アクセス証明書 (WRPAC) を LoTE のトラストアンカーまで検証", "Validated the access certificate (WRPAC) up to the LoTE trust anchor"),
-		M(fmt.Sprintf("%s / %s (%s), policy %s, 発行 %s", rp.Organization, rp.CommonName, rp.OrganizationIdentifier, rp.Policy, rp.AccessCA),
-			fmt.Sprintf("%s / %s (%s), policy %s, issued by %s", rp.Organization, rp.CommonName, rp.OrganizationIdentifier, rp.Policy, rp.AccessCA)))
 
 	requested, err := requestedClaims(requestObject)
 	if err != nil {
@@ -372,12 +395,19 @@ func (i *Instance) PreparePresentation(requestURI string) (*PresentationPrep, er
 		Requested:      requested,
 		Credential:     creds[0],
 		CreatedAt:      time.Now(),
+		Untrusted:      untrusted,
 	}, nil
 }
 
 // SubmitPresentation creates the SD-JWT VC presentation with the chosen disclosures + KB-JWT and
 // posts it (with the Wallet Attestation) to the verifier.
-func (i *Instance) SubmitPresentation(p *PresentationPrep, claims []string) (string, error) {
+// SubmitPresentation presents the selected claims. For a Verifier that is not in the Trust List
+// (p.Untrusted) the user must have accepted the risk (acceptUntrusted); otherwise nothing is sent.
+func (i *Instance) SubmitPresentation(p *PresentationPrep, claims []string, acceptUntrusted bool) (string, error) {
+	if p.Untrusted != "" && !acceptUntrusted {
+		return "", i.fail(M("Trust List に掲載されていない Verifier への提示を中止", "Presentation to a Verifier not in the Trust List was cancelled"),
+			fmt.Errorf("the Verifier is not in the Trust List (%s); the user did not accept presenting to it", p.Untrusted))
+	}
 	var selected []string
 	for _, c := range claims {
 		if _, ok := p.Credential.Disclosures[c]; ok {
@@ -392,7 +422,15 @@ func (i *Instance) SubmitPresentation(p *PresentationPrep, claims []string) (str
 		return "", err
 	}
 	installAttestationTransport(i)
-	w, err := i.newWallet(&oid4vpRoots{pool: p.LoTE.Pool()})
+	roots := p.LoTE.Pool()
+	if p.Untrusted != "" {
+		// the user accepted the risk: trust the Verifier's own certificate for this request only,
+		// so that vcknots still verifies the request object signature
+		roots = p.RP.SelfRoots()
+		i.warn(M("ユーザーの判断で Trust List 未掲載の Verifier に提示", "Presenting to a Verifier not in the Trust List at the user's choice"),
+			S("%s (%s)", p.RP.CommonName, p.ClientID))
+	}
+	w, err := i.newWallet(&oid4vpRoots{pool: roots})
 	if err != nil {
 		return "", err
 	}

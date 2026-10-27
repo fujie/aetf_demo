@@ -282,7 +282,7 @@ func (i *Instance) serve(port string) error {
 			return
 		}
 		i.steps.begin()
-		redirect, err := i.SubmitPresentation(prep, r.Form["claim"])
+		redirect, err := i.SubmitPresentation(prep, r.Form["claim"], r.FormValue("accept_untrusted") == "1")
 		d := pageData{Title: tr(lang, "提示結果", "Presentation result"), Steps: i.steps.take(), Data: map[string]any{"Redirect": redirect}}
 		if err != nil {
 			d.Error = err.Error()
@@ -324,6 +324,20 @@ func (i *Instance) serve(port string) error {
 			d.Flash = tr(lang, "Wallet Attestation を取得しました", "Obtained a Wallet Attestation")
 		}
 		i.render(w, r, "result", d)
+	})
+
+	// Demo: act as a wallet without a Wallet Provider registration (no Wallet Attestation is sent)
+	mux.HandleFunc("POST /demo/unregistered", func(w http.ResponseWriter, r *http.Request) {
+		st.mu.Lock()
+		defer st.mu.Unlock()
+		on := r.FormValue("on") == "1"
+		_ = i.SetDemoUnregistered(on)
+		lang, _ := requestLang(r)
+		msg := tr(lang, "通常のウォレットに戻しました", "Back to a normal wallet")
+		if on {
+			msg = tr(lang, "未登録ウォレットとして動作します (Wallet Attestation を送りません)", "Acting as an unregistered wallet (no Wallet Attestation is sent)")
+		}
+		http.Redirect(w, r, "/?flash="+url.QueryEscape(msg), http.StatusSeeOther)
 	})
 
 	mux.HandleFunc("POST /reset", func(w http.ResponseWriter, r *http.Request) {
@@ -392,7 +406,11 @@ const layoutTpl = `<!doctype html><html lang="{{lang}}"><head><meta charset="utf
  .steps{list-style:none;padding:0;margin:0}
  .steps li{padding:8px 0 8px 28px;position:relative;border-bottom:1px solid #eef1f4;font-size:14px}
  .steps li:before{position:absolute;left:4px;top:8px;font-weight:700}
- .steps li.ok:before{content:"✓";color:var(--ok)} .steps li.ng:before{content:"✗";color:var(--ng)} .steps li.info:before{content:"→";color:var(--mut)}
+ .steps li.ok:before{content:"✓";color:var(--ok)} .steps li.ng:before{content:"✗";color:var(--ng)} .steps li.info:before{content:"→";color:var(--mut)} .steps li.warn:before{content:"⚠";color:var(--warn)}
+ .warnbox{background:#fff4d4;border:2px solid var(--warn);border-radius:12px;padding:14px;margin:0 0 12px;color:#4d3800}
+ .warnbox h2{color:var(--warn);margin-top:0} label.accept{display:flex;gap:10px;align-items:flex-start;margin-top:10px;font-weight:600}
+ label.accept input{width:22px;height:22px;margin-top:1px} .btn:disabled{opacity:.45;cursor:not-allowed}
+ .badge.bad{background:#ffebe9;color:var(--ng)}
  .steps .d{display:block;color:var(--mut);font-size:12px;word-break:break-all}
  .flash{background:#dafbe1;color:var(--ok);border-radius:10px;padding:10px 12px;margin-bottom:12px;font-weight:600}
  .error{background:#ffebe9;color:var(--ng);border-radius:10px;padding:10px 12px;margin-bottom:12px;word-break:break-all}
@@ -425,6 +443,12 @@ const homeTpl = `
  {{else}}<div class="mut">{{t "未登録です。Wallet Provider に登録して Wallet Attestation を取得してください。" "Not registered. Register with the Wallet Provider to obtain a Wallet Attestation."}}</div>{{end}}
  <form method="post" action="/attest"><button class="btn sec">{{if .Inst.InstanceID}}{{t "Wallet Attestation を再取得" "Fetch a new Wallet Attestation"}}{{else}}{{t "Wallet Provider に登録" "Register with the Wallet Provider"}}{{end}}</button></form>
 </div>
+<div class="card{{if .Inst.DemoUnregistered}} warnbox{{end}}">
+ <h2>{{t "デモ: 未登録ウォレット" "Demo: unregistered wallet"}}</h2>
+ <div class="mut">{{t "オンにすると Wallet Attestation を送らない (Wallet Provider に登録されていない) ウォレットとして動作し、Issuer のクレデンシャル発行と Verifier への提示が拒否されることを確認できます。" "When on, the wallet acts as one without a Wallet Provider registration (it sends no Wallet Attestation), so you can see the Issuer refusing to issue and the Verifier refusing the presentation."}}</div>
+ <form method="post" action="/demo/unregistered"><input type="hidden" name="on" value="{{if .Inst.DemoUnregistered}}0{{else}}1{{end}}">
+  <button class="btn sec">{{if .Inst.DemoUnregistered}}{{t "オン → 通常のウォレットに戻す" "On → back to a normal wallet"}}{{else}}{{t "オフ → 未登録ウォレットとして動作" "Off → act as an unregistered wallet"}}{{end}}</button></form>
+</div>
 {{range .Data}}
  <a class="vc" href="/credentials/{{.ID}}" style="background:{{.Display.Background}};color:{{.Display.TextColor}}">
   <div style="display:flex;justify-content:space-between;align-items:start">
@@ -451,7 +475,7 @@ const scanTpl = `
  <button class="btn">{{t "開く" "Open"}}</button></form>
 </div>`
 
-const stepsTpl = `{{define "steps"}}{{if .}}<div class="card"><h2>{{t "検証ステップ" "Verification steps"}}</h2><ul class="steps">{{range .}}<li class="{{if .Info}}info{{else if .OK}}ok{{else}}ng{{end}}">{{msg .Title}}{{with msg .Detail}}<span class="d">{{.}}</span>{{end}}</li>{{end}}</ul></div>{{end}}{{end}}`
+const stepsTpl = `{{define "steps"}}{{if .}}<div class="card"><h2>{{t "検証ステップ" "Verification steps"}}</h2><ul class="steps">{{range .}}<li class="{{if .Warn}}warn{{else if .Info}}info{{else if .OK}}ok{{else}}ng{{end}}">{{msg .Title}}{{with msg .Detail}}<span class="d">{{.}}</span>{{end}}</li>{{end}}</ul></div>{{end}}{{end}}`
 
 const offerTpl = `
 {{$p := index .Data "Preview"}}
@@ -472,13 +496,18 @@ const offerTpl = `
 
 const requestTpl = `
 {{$p := index .Data "Prep"}}
+{{if $p.Untrusted}}<div class="warnbox"><h2>⚠ {{t "この Verifier は Trust List に掲載されていません" "This Verifier is not in the Trust List"}}</h2>
+ <div>{{t "アクセス証明書を Trust List (LoTE) の認証局までたどれませんでした。相手が登録済みの正規の Relying Party であることを確認できないため、個人情報を渡すと悪用されるおそれがあります。" "Its access certificate could not be validated up to a certification authority in the Trust List (LoTE). The wallet cannot confirm that it is a registered, legitimate Relying Party, so the data you disclose could be misused."}}</div>
+ <div class="mut" style="margin-top:6px">{{t "理由" "Reason"}}: {{$p.Untrusted}}</div></div>{{end}}
 <div class="card"><h2>{{t "提示を求めている相手" "Requested by"}}</h2>
  <div style="font-size:18px;font-weight:700">{{$p.RP.CommonName}}</div>
- <div class="mut">{{$p.RP.Organization}} ({{$p.RP.OrganizationIdentifier}})</div>
+ <div class="mut">{{$p.RP.Organization}}{{with $p.RP.OrganizationIdentifier}} ({{.}}){{end}}</div>
  <table style="margin-top:8px">
   <tr><th>client_id</th><td><code>{{$p.ClientID}}</code></td></tr>
-  <tr><th>{{t "アクセス証明書" "Access certificate"}}</th><td><span class="badge ok" style="background:#dafbe1">ETSI TS 119 411-8</span><div class="mut">policy {{$p.RP.Policy}}<br>{{t "発行" "issued by"}} {{$p.RP.AccessCA}}</div></td></tr>
-  <tr><th>Trust List</th><td><span class="badge ok" style="background:#dafbe1">ETSI TS 119 602</span><div class="mut">{{$p.LoTE.SchemeOperator}} (seq {{$p.LoTE.SequenceNumber}})<br>{{t "署名者" "signer"}}: {{chain $p.LoTE.FederationPath}}</div></td></tr>
+  {{if $p.Untrusted}}<tr><th>{{t "アクセス証明書" "Access certificate"}}</th><td><span class="badge bad">{{t "Trust List 未掲載" "not in the Trust List"}}</span></td></tr>
+  <tr><th>Trust List</th><td><span class="badge ok" style="background:#dafbe1">ETSI TS 119 602</span><div class="mut">{{$p.LoTE.SchemeOperator}} (seq {{$p.LoTE.SequenceNumber}})<br>{{t "この Verifier は掲載されていません" "this Verifier is not listed"}}</div></td></tr>
+  {{else}}<tr><th>{{t "アクセス証明書" "Access certificate"}}</th><td><span class="badge ok" style="background:#dafbe1">ETSI TS 119 411-8</span><div class="mut">policy {{$p.RP.Policy}}<br>{{t "発行" "issued by"}} {{$p.RP.AccessCA}}</div></td></tr>
+  <tr><th>Trust List</th><td><span class="badge ok" style="background:#dafbe1">ETSI TS 119 602</span><div class="mut">{{$p.LoTE.SchemeOperator}} (seq {{$p.LoTE.SequenceNumber}})<br>{{t "署名者" "signer"}}: {{chain $p.LoTE.FederationPath}}</div></td></tr>{{end}}
  </table>
 </div>
 <form method="post" action="/present"><input type="hidden" name="id" value="{{index .Data "ID"}}">
@@ -497,7 +526,13 @@ document.querySelectorAll('input[name=claim]').forEach((el) => el.addEventListen
 }))
 </script>
 {{template "steps" .Steps}}
-<button class="btn" name="action" value="present">{{t "提示する" "Present"}}</button>
+{{if $p.Untrusted}}<div class="warnbox"><label class="accept"><input type="checkbox" name="accept_untrusted" value="1" id="accept">
+ <span>{{t "この Verifier が Trust List に掲載されていないことを理解した上で提示します" "I understand that this Verifier is not in the Trust List and want to present anyway"}}</span></label></div>{{end}}
+<button class="btn" name="action" value="present" id="present"{{if $p.Untrusted}} disabled{{end}}>{{if $p.Untrusted}}{{t "警告を理解して提示する" "Present despite the warning"}}{{else}}{{t "提示する" "Present"}}{{end}}</button>
+<script>
+const acc = document.getElementById('accept')
+if (acc) acc.addEventListener('change', () => { document.getElementById('present').disabled = !acc.checked })
+</script>
 <button class="btn sec" name="action" value="deny">{{t "拒否する" "Decline"}}</button>
 </form>`
 

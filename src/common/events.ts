@@ -10,7 +10,7 @@ type StoredEvent = {
   id: number
   at: string
   source: string
-  level: 'ok' | 'info' | 'error'
+  level: 'ok' | 'info' | 'warn' | 'error'
   message: Bi
   detail?: Bi
 }
@@ -23,7 +23,7 @@ export type DemoEvent = {
   source: string
   /** Source display name */
   sourceLabel: string
-  level: 'ok' | 'info' | 'error'
+  level: 'ok' | 'info' | 'warn' | 'error'
   message: string
   detail?: string
 }

@@ -43,7 +43,7 @@ commands:
   serve                        run the web wallet UI (default http://localhost:<BASE_PORT+60>)
   init                         register with the Wallet Provider and obtain a Wallet Attestation
   receive '<credential offer>' receive a credential (OID4VCI pre-authorized code flow)
-  present '<openid4vp uri>' [--claims a,b,c]
+  present '<openid4vp uri>' [--claims a,b,c] [--allow-untrusted]
                                present the latest credential (OID4VP, SD-JWT VC + KB-JWT)
   list                         list stored credentials (with Token Status List status)
 
@@ -92,10 +92,19 @@ func main() {
 				usage()
 			}
 			var claims []string
-			if len(os.Args) >= 5 && os.Args[3] == "--claims" {
-				claims = strings.Split(os.Args[4], ",")
+			allowUntrusted := false
+			for a := 3; a < len(os.Args); a++ {
+				switch os.Args[a] {
+				case "--claims":
+					if a+1 < len(os.Args) {
+						claims = strings.Split(os.Args[a+1], ",")
+						a++
+					}
+				case "--allow-untrusted":
+					allowUntrusted = true
+				}
 			}
-			err = inst.present(os.Args[2], claims)
+			err = inst.present(os.Args[2], claims, allowUntrusted)
 		case "list":
 			err = inst.list()
 		default:
@@ -129,7 +138,7 @@ func (i *Instance) receive(offerURI string) error {
 	return nil
 }
 
-func (i *Instance) present(requestURI string, claims []string) error {
+func (i *Instance) present(requestURI string, claims []string, allowUntrusted bool) error {
 	prep, err := i.PreparePresentation(requestURI)
 	if err != nil {
 		return err
@@ -137,7 +146,11 @@ func (i *Instance) present(requestURI string, claims []string) error {
 	if len(claims) == 0 {
 		claims = prep.Requested
 	}
-	_, err = i.SubmitPresentation(prep, claims)
+	if prep.Untrusted != "" && !allowUntrusted {
+		fmt.Fprintln(os.Stderr, "⚠ "+M("この Verifier は Trust List に掲載されていません。提示するには --allow-untrusted を指定してください",
+			"This Verifier is not in the Trust List. Pass --allow-untrusted to present anyway").In(cliLang()))
+	}
+	_, err = i.SubmitPresentation(prep, claims, allowUntrusted)
 	return err
 }
 

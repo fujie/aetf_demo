@@ -164,6 +164,14 @@ const scenario = () => {
       b: [btn('/trust-map', t('信頼検証マップ', 'Trust Map')), btn('/trust-chain', 'Trust Chain Visualizer')],
     },
     {
+      t: t('信頼できない相手を試す', 'Try untrusted parties'),
+      d: t(
+        'Web Wallet の「デモ: 未登録ウォレット」をオンにすると、Wallet Attestation を送らない (Wallet Provider に登録されていない) ウォレットになり、Issuer はクレデンシャルを発行せず、Verifier は提示を拒否します。Verifier の「Trust List 未掲載の証明書で提示リクエストを作成」では、ウォレットが「Trust List に掲載されていない Verifier」と警告し、ユーザーが同意した場合だけ提示します。',
+        'Turn on "Demo: unregistered wallet" in the Web Wallet: the wallet sends no Wallet Attestation (it is not registered with a Wallet Provider), so the Issuer issues no credential and the Verifier rejects the presentation. With "Create a request signed with a certificate not in the Trust List" at the Verifier, the wallet warns that the Verifier is not in the Trust List and presents only if the user agrees.'
+      ),
+      b: [btn(WALLET_UI_URL, t('Web Wallet を開く', 'Open the Web Wallet')), btn(ENTITY.verifier, t('Verifier を開く', 'Open the Verifier'))],
+    },
+    {
       t: t('Trust Chain を壊してみる', 'Break a Trust Chain'),
       d: t(
         'フェデレーション設定で、登録の停止・Subordinate Statement の誤った鍵や期限切れ・metadata_policy の変更・authority_hints の変更・鍵ローテーションを行い、発行・提示・ログインが拒否されることを確認します (プリセットあり)。「すべて初期状態に戻す」で復旧します。',
@@ -212,7 +220,7 @@ ol.sc{list-style:none;margin:0;padding:0}ol.sc li{display:flex;gap:12px;padding:
 @keyframes fade{from{background:#fff8c5}to{background:transparent}}
 .ev-h{display:flex;gap:6px;align-items:baseline}.ev-t{color:var(--mut);font-size:11px;font-variant-numeric:tabular-nums}
 .chip{font-size:11px;border-radius:999px;padding:1px 8px;color:#fff;white-space:nowrap}
-.lv-ok{color:var(--ok)}.lv-error{color:var(--ng)}.lv-info{color:var(--fg)}
+.lv-ok{color:var(--ok)}.lv-error{color:var(--ng)}.lv-info{color:var(--fg)}.lv-warn{color:#9a6700;font-weight:600}
 .ev-d{color:var(--mut);font-size:12px;word-break:break-all;margin-left:2px}
 .empty{color:var(--mut);font-size:13px}
 header .hn{margin-left:auto;display:flex;gap:14px;align-items:center;flex-wrap:wrap}header .hn a{color:#fff;font-size:13px;white-space:nowrap}
@@ -242,7 +250,7 @@ function render(e) {
   const li = document.createElement('li'); li.dataset.source = e.source
   li.hidden = !!filter.value && filter.value !== e.source
   const t = new Date(e.at).toLocaleTimeString('${t('ja-JP', 'en-GB')}')
-  const mark = e.level === 'ok' ? '✓' : e.level === 'error' ? '✗' : '→'
+  const mark = e.level === 'ok' ? '✓' : e.level === 'error' ? '✗' : e.level === 'warn' ? '⚠' : '→'
   li.innerHTML = '<div class="ev-h"><span class="ev-t">' + t + '</span><span class="chip" style="background:' + (colors[e.source] || '#57606a') + '">' + esc(e.sourceLabel) + '</span><span class="lv-' + e.level + '">' + mark + ' ' + esc(e.message) + '</span></div>' + (e.detail ? '<div class="ev-d">' + esc(e.detail) + '</div>' : '')
   document.getElementById('empty')?.remove()
   list.prepend(li)
@@ -336,7 +344,7 @@ export const createDemoConsole = (opts: {
     type Posted = { source?: string; level?: string; message?: string; message_en?: string; detail?: string; detail_en?: string }
     const e = await c.req.json<Posted>().catch(() => ({}) as Posted)
     if (!e.message) return c.json({ error: 'message required' }, 400)
-    const level = e.level === 'error' || e.level === 'info' ? e.level : 'ok'
+    const level = e.level === 'error' || e.level === 'info' || e.level === 'warn' ? e.level : 'ok'
     const text = (ja: string, en: string | undefined, max: number) => ({ ja: ja.slice(0, max), en: (en || ja).slice(0, max) })
     emit(
       String(e.source ?? 'external').slice(0, 40),

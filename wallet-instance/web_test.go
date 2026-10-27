@@ -18,13 +18,14 @@ func TestTemplatesRenderInBothLanguages(t *testing.T) {
 		ClaimNames: []string{"name"}, Disclosures: map[string]any{"name": "Taro"}}
 	steps := []Step{{OK: true, Title: M("確認", "Checked"), Detail: S("detail")}}
 	pages := map[string]any{
-		"home":       []*CredentialView{cred},
-		"scan":       nil,
-		"activity":   nil,
-		"result":     map[string]any{"CredentialID": "c1"},
-		"offer":      map[string]any{"ID": "x", "Preview": &OfferPreview{Issuer: "http://localhost:8720", Display: disp}},
-		"request":    map[string]any{"ID": "x", "Prep": &PresentationPrep{LoTE: &LoadedLoTE{}, RP: &RelyingParty{}, Credential: cred, ClaimOrder: []string{"name"}, Requested: []string{"name"}}},
-		"credential": map[string]any{"C": cred, "Payload": "{}"},
+		"home":              []*CredentialView{cred},
+		"scan":              nil,
+		"activity":          nil,
+		"result":            map[string]any{"CredentialID": "c1"},
+		"offer":             map[string]any{"ID": "x", "Preview": &OfferPreview{Issuer: "http://localhost:8720", Display: disp}},
+		"request":           map[string]any{"ID": "x", "Prep": &PresentationPrep{LoTE: &LoadedLoTE{}, RP: &RelyingParty{}, Credential: cred, ClaimOrder: []string{"name"}, Requested: []string{"name"}}},
+		"credential":        map[string]any{"C": cred, "Payload": "{}"},
+		"request-untrusted": map[string]any{"ID": "x", "Prep": &PresentationPrep{LoTE: &LoadedLoTE{}, RP: &RelyingParty{CommonName: "Unlisted"}, Credential: cred, ClaimOrder: []string{"name"}, Requested: []string{"name"}, Untrusted: "access certificate is self-signed"}},
 	}
 	inst := &Instance{}
 	want := map[string]string{"ja": "クレデンシャル", "en": "Credentials"}
@@ -32,10 +33,15 @@ func TestTemplatesRenderInBothLanguages(t *testing.T) {
 		for name, data := range pages {
 			w := httptest.NewRecorder()
 			r := httptest.NewRequest("GET", "/?lang="+lang, nil)
-			inst.render(w, r, name, pageData{Title: name, Data: data, Steps: steps})
+			tpl := strings.TrimSuffix(name, "-untrusted")
+			inst.render(w, r, tpl, pageData{Title: name, Data: data, Steps: steps})
 			body := w.Body.String()
 			if w.Code != 200 || !strings.Contains(body, want[lang]) {
 				t.Errorf("%s/%s: status %d, body %.300s", lang, name, w.Code, body)
+			}
+			// the untrusted request page warns and requires consent before presenting
+			if name == "request-untrusted" && (!strings.Contains(body, `name="accept_untrusted"`) || !strings.Contains(body, "Trust List")) {
+				t.Errorf("%s/%s: no Trust List warning / consent checkbox", lang, name)
 			}
 		}
 	}

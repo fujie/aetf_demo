@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/go-jose/go-jose/v4"
 )
@@ -70,6 +71,9 @@ type State struct {
 	TrustListProvider string `json:"trust_list_provider"`
 	WalletInstanceID  string `json:"wallet_instance_id,omitempty"`
 	WalletAttestation string `json:"wallet_attestation,omitempty"`
+	// Demo: behave like a wallet that is not registered with a Wallet Provider (send no Wallet
+	// Attestation), to show Issuers and Verifiers rejecting it.
+	DemoUnregistered bool `json:"demo_unregistered,omitempty"`
 }
 
 type Instance struct {
@@ -82,6 +86,9 @@ type Instance struct {
 
 	reRegistered bool
 	steps        stepRecorder
+	// credential endpoints of the issuers the wallet is receiving from: JSON POSTs to them carry
+	// the Wallet Attestation (the Issuer verifies it again when issuing)
+	credentialEndpoints sync.Map
 }
 
 func openInstance(dir, trustAnchorPath string) (*Instance, error) {
@@ -120,3 +127,12 @@ func (i *Instance) save() error {
 
 // InstanceID is the Wallet Instance identifier assigned by the Wallet Provider.
 func (i *Instance) InstanceID() string { return i.state.WalletInstanceID }
+
+// DemoUnregistered reports whether the wallet acts as one without a Wallet Provider registration.
+func (i *Instance) DemoUnregistered() bool { return i.state.DemoUnregistered }
+
+// SetDemoUnregistered switches the "unregistered wallet" demo mode.
+func (i *Instance) SetDemoUnregistered(on bool) error {
+	i.state.DemoUnregistered = on
+	return i.save()
+}

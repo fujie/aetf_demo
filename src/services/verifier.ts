@@ -3,7 +3,7 @@ import { type Bi, bi, inBoth, pick, t } from '../common/i18n.js'
 import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { Hono } from 'hono'
+import { type Context, Hono } from 'hono'
 import * as jose from 'jose'
 import * as x509 from '@peculiar/x509'
 import { initializeContext } from '@trustknots/vcknots'
@@ -38,6 +38,8 @@ type PresentationResult = {
   status: 'pending' | 'verified' | 'rejected'
   checks: Check[]
   disclosed?: Record<string, unknown>
+  /** demo: request signed with a certificate that is not in the Trust List */
+  unlisted?: boolean
 }
 
 const REQUESTED_CLAIMS = ['family_name', 'given_name', 'organization', 'enrollment_status']
@@ -99,6 +101,49 @@ export const createVerifier = async (opts: {
     return verifierFlow
   }
 
+  /** vcknots verifier flow whose request objects carry `certificatePem` in x5c. */
+  const flowWithCertificate = async (certificatePem: string) => {
+    const newFlow = initializeVerifierFlow(initializeContext({ debug: true }))
+    await newFlow.createVerifierMetadata(
+      verifierId,
+      VerifierMetadata({
+        client_name: opts.name,
+        vp_formats_supported: {
+          'dc+sd-jwt': { 'sd-jwt_alg_values': ['ES256'], 'kb-jwt_alg_values': ['ES256'] },
+        },
+      }),
+      { privateKey: rpKey.privateKeyPem, certificate: certificatePem, format: 'pem', alg: 'ES256' }
+    )
+    return newFlow
+  }
+
+  /**
+   * Demo of a Verifier that is not in the Trust List: request objects signed with a self-signed
+   * certificate (same client_id / DNS name, but not issued by the Access CA), so that wallets warn.
+   */
+  let unlistedFlow: ReturnType<typeof initializeVerifierFlow> | undefined
+  const unlistedFlowOf = async () => {
+    if (!unlistedFlow) {
+      const privateKey = await jose.importPKCS8(rpKey.privateKeyPem, 'ES256', { extractable: true })
+      const publicKey = await jose.importJWK(rpKey.publicJwk, 'ES256')
+      const cert = await x509.X509CertificateGenerator.createSelfSigned({
+        serialNumber: `01${randomUUID().replaceAll('-', '')}`,
+        name: `C=JP, O=Example Unlisted Service, CN=${opts.name} (not in the Trust List)`,
+        notBefore: new Date(Date.now() - 60_000),
+        notAfter: new Date(Date.now() + 365 * 24 * 3600 * 1000),
+        signingAlgorithm: { name: 'ECDSA', hash: 'SHA-256' },
+        keys: { privateKey: privateKey as CryptoKey, publicKey: publicKey as CryptoKey },
+        extensions: [
+          new x509.BasicConstraintsExtension(false, undefined, true),
+          new x509.KeyUsagesExtension(x509.KeyUsageFlags.digitalSignature, true),
+          new x509.SubjectAlternativeNameExtension([{ type: 'dns', value: dnsName }]),
+        ],
+      })
+      unlistedFlow = await flowWithCertificate(cert.toString('pem'))
+    }
+    return unlistedFlow
+  }
+
   const results = new Map<string, PresentationResult>() // by state
   const statusListClient = createStatusListClient(federationStatusListKeyResolver(opts.anchors))
 
@@ -140,20 +185,7 @@ export const createVerifier = async (opts: {
     if (!res.ok) throw new Error(`registration failed: ${res.status} ${await res.text()}`)
     const { access_certificate } = (await res.json()) as { access_certificate: string }
     accessCertificate = new x509.X509Certificate(access_certificate)
-
-    const context = initializeContext({ debug: true })
-    const newFlow = initializeVerifierFlow(context)
-    await newFlow.createVerifierMetadata(
-      verifierId,
-      VerifierMetadata({
-        client_name: opts.name,
-        vp_formats_supported: {
-          'dc+sd-jwt': { 'sd-jwt_alg_values': ['ES256'], 'kb-jwt_alg_values': ['ES256'] },
-        },
-      }),
-      { privateKey: rpKey.privateKeyPem, certificate: access_certificate, format: 'pem', alg: 'ES256' }
-    )
-    verifierFlow = newFlow
+    verifierFlow = await flowWithCertificate(access_certificate)
     console.log(`[verifier] registered ${clientId}; access certificate serial ${accessCertificate.serialNumber} (${accessCertificate.issuer})`)
     emit('Verifier', 'ok', bi('Registrar に登録しアクセス証明書 (WRPAC) を取得', 'Registered at the Registrar and obtained an access certificate (WRPAC)'), `serial ${accessCertificate.serialNumber}`)
   }
@@ -164,7 +196,7 @@ export const createVerifier = async (opts: {
     const rows = [...results.values()]
       .reverse()
       .map(
-        (r) => `<tr><td><a href="/requests/${encodeURIComponent(r.state)}">${esc(r.state.slice(0, 8))}</a></td><td>${esc(r.createdAt)}</td>
+        (r) => `<tr><td><a href="/requests/${encodeURIComponent(r.state)}">${esc(r.state.slice(0, 8))}</a>${r.unlisted ? ` <span class="ng">${t('(Trust List 未掲載)', '(not in Trust List)')}</span>` : ''}</td><td>${esc(r.createdAt)}</td>
         <td>${r.status === 'verified' ? `<span class="ok">${t('検証成功', 'verified')}</span>` : r.status === 'rejected' ? `<span class="ng">${t('検証失敗', 'rejected')}</span>` : t('待機中', 'pending')}</td></tr>`
       )
       .join('')
@@ -173,6 +205,8 @@ export const createVerifier = async (opts: {
         `Verifier - ${opts.name}`,
         `<section><p>${t('学認 学生証明書 (SD-JWT VC) の提示を要求します。', 'Requests a GakuNin student credential (SD-JWT VC).')}</p>
         <form method="post" action="/requests"><button>${t('提示リクエストを作成', 'Create presentation request')}</button></form>
+        <form method="post" action="/requests" style="margin-top:8px"><input type="hidden" name="unlisted" value="1"><button style="background:#9a6700">${t('Trust List 未掲載の証明書で提示リクエストを作成 (デモ)', 'Create a request signed with a certificate not in the Trust List (demo)')}</button></form>
+        <p class="mut">${t('2 つ目のボタンは、Access CA が発行していない自己署名証明書でリクエストに署名します。Wallet は「Trust List に掲載されていない Verifier」として警告し、ユーザーが同意した場合のみ提示します。', 'The second button signs the request with a self-signed certificate not issued by the Access CA. The wallet warns that the Verifier is not in the Trust List and presents only if the user agrees.')}</p>
         <p class="mut">client_id: <code>${esc(clientId)}</code> / Registrar: <a href="${esc(opts.trustListEntityId)}/">${escMsg(opts.trustListEntityId)}</a></p>
         <p class="mut">Access Certificate (WRPAC): ${accessCertificate ? `<code>${esc(accessCertificate.subject)}</code><br>issuer <code>${esc(accessCertificate.issuer)}</code> serial <code>${esc(accessCertificate.serialNumber)}</code>` : `<span class="ng">${t('未登録', 'not registered')}</span>`}</p>
         <form method="post" action="/register"><button>${t('Registrar へ登録 / 再登録 (Access Certificate 再発行)', 'Register / re-register at the Registrar (re-issue the access certificate)')}</button></form></section>
@@ -192,6 +226,9 @@ export const createVerifier = async (opts: {
 
   app.post('/requests', async (c) => {
     try {
+      const form = await c.req.parseBody().catch(() => ({}) as Record<string, unknown>)
+      const unlisted = form.unlisted === '1' || c.req.query('unlisted') === '1'
+      const requestFlow = unlisted ? await unlistedFlowOf() : flow()
       const state = randomUUID().replaceAll('-', '')
       const query = {
         dcql_query: {
@@ -205,7 +242,7 @@ export const createVerifier = async (opts: {
           ],
         },
       }
-      const { request, transactionId } = await flow().createAuthzRequest(
+      const { request, transactionId } = await requestFlow.createAuthzRequest(
         verifierId,
         'vp_token',
         clientId,
@@ -216,7 +253,7 @@ export const createVerifier = async (opts: {
           state,
           base_url: baseUrl,
           response_uri: `${baseUrl}/callback`,
-          request_uri: `${baseUrl}/request.jwt`,
+          request_uri: unlisted ? `${baseUrl}/request-unlisted.jwt` : `${baseUrl}/request.jwt`,
         }
       )
       const requestUri = `openid4vp:?${Object.entries(request)
@@ -235,6 +272,7 @@ export const createVerifier = async (opts: {
         requestUri,
         status: 'pending',
         checks: [],
+        ...(unlisted ? { unlisted: true } : {}),
       })
       if (c.req.header('Accept')?.includes('application/json')) {
         return c.json({ state, request_uri: requestUri, result_url: `${baseUrl}/requests/${state}` })
@@ -255,7 +293,7 @@ export const createVerifier = async (opts: {
       .join('')
     const body =
       r.status === 'pending'
-        ? `<section><p>${t('Wallet でこのリクエストを読み取ってください。', 'Scan this request with the wallet.')}</p>
+        ? `${r.unlisted ? `<section><p class="ng">⚠ ${t('このリクエストは Trust List に掲載されていない (Access CA が発行していない) 証明書で署名されています。Wallet は警告を表示します。', 'This request is signed with a certificate that is not in the Trust List (not issued by the Access CA). The wallet will show a warning.')}</p></section>` : ''}<section><p>${t('Wallet でこのリクエストを読み取ってください。', 'Scan this request with the wallet.')}</p>
            <p><a class="btn" href="${esc(`${WALLET_UI_URL}/present?request=${encodeURIComponent(r.requestUri)}`)}" target="_blank">${t('Web Wallet で開く', 'Open in Web Wallet')}</a></p>
            ${await qrSvg(r.requestUri)}
            <p>${t('Wallet Instance (CLI) の場合', 'With the Wallet Instance CLI')}:</p><pre>./wallet-instance present '${esc(r.requestUri)}'</pre>
@@ -266,16 +304,18 @@ export const createVerifier = async (opts: {
     return c.html(page(`Verifier - ${t('提示リクエスト', 'presentation request')} ${r.state.slice(0, 8)}`, `${body}<section><a href="/">${t('戻る', 'Back')}</a></section>`, { refresh: r.status === 'pending' ? 3 : undefined }))
   })
 
-  app.get('/request.jwt/:id', async (c) => {
+  const serveRequestObject = (getFlow: () => Promise<ReturnType<typeof initializeVerifierFlow>>) => async (c: Context) => {
     try {
       const id = VerifierRequestObjectId.schema.parse(c.req.param('id'))
-      const jar = await flow().findRequestObject(verifierId, id)
+      const jar = await (await getFlow()).findRequestObject(verifierId, id)
       return c.body(jar, 200, { 'Content-Type': 'application/oauth-authz-req+jwt' })
     } catch (e) {
       const { body, status } = toErrorResponse(e)
       return c.json(body, status)
     }
-  })
+  }
+  app.get('/request.jwt/:id', serveRequestObject(async () => flow()))
+  app.get('/request-unlisted.jwt/:id', serveRequestObject(unlistedFlowOf))
 
   app.post('/callback', async (c) => {
     const form = await c.req.formData().catch(() => null)
@@ -332,7 +372,8 @@ export const createVerifier = async (opts: {
       const rawVpToken = form.get('vp_token')
       const vpToken = JSON.parse(String(rawVpToken)) as Record<string, string[]>
       const response = VerifierAuthorizationResponse({ vp_token: vpToken, state })
-      await flow().verifyPresentations(response, result.transactionId, { isKbJwt: true })
+      const responseFlow = result.unlisted ? await unlistedFlowOf() : flow()
+      await responseFlow.verifyPresentations(response, result.transactionId, { isKbJwt: true })
       const first = Object.values(vpToken)[0]
       presentation = Array.isArray(first) ? first[0] : String(first)
       checks.push({ name: 'VP / KB-JWT (vcknots)', ok: true, detail: bi('SD-JWT VC と Key Binding JWT を検証しました', 'Verified the SD-JWT VC and the Key Binding JWT') })

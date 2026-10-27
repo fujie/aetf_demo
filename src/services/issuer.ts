@@ -546,6 +546,32 @@ export const createIssuer = async (opts: {
       const issuance = byAccessToken.get(token)
       if (!issuance) return c.json({ error: 'invalid_token', error_description: 'unknown access token' }, 401)
 
+      // The Wallet Attestation is verified again when the credential is issued: the Wallet Instance
+      // must still be valid at its Wallet Provider (not suspended / revoked in the meantime) and be
+      // the same instance that obtained the access token.
+      try {
+        const attestation = await verifyWalletAttestation(
+          c.req.header(ATTESTATION_HEADER),
+          c.req.header(ATTESTATION_POP_HEADER),
+          baseUrl,
+          opts.anchors
+        )
+        if (attestation.clientId !== issuance.walletClientId) {
+          throw new WalletAttestationError(
+            `wallet instance ${attestation.clientId} is not the one that obtained the access token (${issuance.walletClientId})`
+          )
+        }
+      } catch (e) {
+        if (!(e instanceof WalletAttestationError)) throw e
+        emit(
+          '学認Issuer',
+          'error',
+          bi('クレデンシャル発行を拒否: Wallet Attestation が無効', 'Credential issuance refused: invalid Wallet Attestation'),
+          e.message
+        )
+        return c.json({ error: 'invalid_client', error_description: e.message }, 401)
+      }
+
       // Allocate a Token Status List entry for this credential at the Status List provider
       if (!issuance.status) {
         const res = await fetch(`${opts.statusListEntityId}/lists/${STATUS_LIST_ID}/entries`, {

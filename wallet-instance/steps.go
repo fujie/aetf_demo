@@ -16,6 +16,7 @@ type Step struct {
 	At     time.Time `json:"at"`
 	OK     bool      `json:"ok"`
 	Info   bool      `json:"info,omitempty"`
+	Warn   bool      `json:"warn,omitempty"`
 	Title  Msg       `json:"title"`
 	Detail Msg       `json:"detail"`
 }
@@ -27,7 +28,9 @@ type stepRecorder struct {
 	console bool
 }
 
-var demoConsoleClient = &http.Client{Timeout: 500 * time.Millisecond}
+// demoConsoleClient forwards events with its own transport (a clone of the original default
+// transport), so that the attestation transport installed later never applies to it.
+var demoConsoleClient = &http.Client{Timeout: 500 * time.Millisecond, Transport: http.DefaultTransport.(*http.Transport).Clone()}
 
 func (r *stepRecorder) add(s Step) {
 	s.At = time.Now()
@@ -42,7 +45,9 @@ func (r *stepRecorder) add(s Step) {
 	r.mu.Unlock()
 	if r.console {
 		mark := "✔"
-		if s.Info {
+		if s.Warn {
+			mark = "⚠"
+		} else if s.Info {
 			mark = " →"
 		} else if !s.OK {
 			mark = "✘"
@@ -57,7 +62,9 @@ func (r *stepRecorder) add(s Step) {
 	// best effort: forward to the demo console timeline
 	if url := os.Getenv("DEMO_CONSOLE"); url != "" {
 		level := "ok"
-		if s.Info {
+		if s.Warn {
+			level = "warn"
+		} else if s.Info {
 			level = "info"
 		} else if !s.OK {
 			level = "error"
@@ -111,6 +118,11 @@ func (i *Instance) ok(title, detail Msg) {
 
 func (i *Instance) info(title, detail Msg) {
 	i.steps.add(Step{OK: true, Info: true, Title: title, Detail: detail})
+}
+
+// warn records a step the user should notice (e.g. a Verifier that is not in the Trust List).
+func (i *Instance) warn(title, detail Msg) {
+	i.steps.add(Step{OK: true, Warn: true, Title: title, Detail: detail})
 }
 
 // fail records a failed step and returns err.

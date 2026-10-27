@@ -277,7 +277,9 @@ func (i *Instance) LoadWRPACProvidersLoTE() (*LoadedLoTE, error) {
 	return loaded, nil
 }
 
-// RelyingParty describes an authenticated Relying Party.
+// RelyingParty describes the Relying Party (Verifier) of a presentation request, as stated in its
+// access certificate. Policy / AccessCA are set only when the certificate validates against the
+// Trust List.
 type RelyingParty struct {
 	Organization           string
 	OrganizationIdentifier string
@@ -285,6 +287,30 @@ type RelyingParty struct {
 	Policy                 string
 	AccessCA               string
 	AccessCAEntity         string
+	// certificates from the request object x5c (leaf first)
+	chain []*x509.Certificate
+}
+
+// UntrustedRPError reports that a Relying Party's access certificate cannot be validated against
+// the Trust List (not issued by a WRPAC provider listed in the LoTE, no WRPAC profile, ...). The
+// request itself is well-formed and signed by the certificate's key; the user may still decide to
+// present to it.
+type UntrustedRPError struct{ Reason error }
+
+func (e *UntrustedRPError) Error() string {
+	return "relying party is not in the Trust List: " + e.Reason.Error()
+}
+func (e *UntrustedRPError) Unwrap() error { return e.Reason }
+
+// SelfRoots returns the certificates of the request object x5c as trust roots: used only when the
+// user explicitly chose to present to a Relying Party that is not in the Trust List, so that the
+// request object signature can still be verified.
+func (rp *RelyingParty) SelfRoots() *x509.CertPool {
+	pool := x509.NewCertPool()
+	for _, c := range rp.chain {
+		pool.AddCert(c)
+	}
+	return pool
 }
 
 func (l *LoadedLoTE) Pool() *x509.CertPool {
@@ -295,9 +321,11 @@ func (l *LoadedLoTE) Pool() *x509.CertPool {
 	return pool
 }
 
-// AuthenticateRelyingParty validates the access certificate in the request object x5c: WRPAC
-// profile (ETSI TS 119 411-8) and certification path to a LoTE trust anchor. Revocation (CRL) is
-// checked by the vcknots presenter when it verifies the request object.
+// AuthenticateRelyingParty validates the access certificate in the request object x5c: the request
+// object must be signed by the certificate's key and the certificate must name the client_id (hard
+// errors); then the WRPAC profile (ETSI TS 119 411-8) and the certification path to a LoTE trust
+// anchor are checked - failing those returns the Relying Party with an *UntrustedRPError (not in the
+// Trust List). Revocation (CRL) is checked by the vcknots presenter when it verifies the request object.
 func (l *LoadedLoTE) AuthenticateRelyingParty(requestObject, clientID string) (*RelyingParty, error) {
 	parts := strings.Split(requestObject, ".")
 	if len(parts) != 3 {
@@ -313,9 +341,8 @@ func (l *LoadedLoTE) AuthenticateRelyingParty(requestObject, clientID string) (*
 	if err := json.Unmarshal(rawHeader, &hdr); err != nil {
 		return nil, err
 	}
-	x5c := hdr.X5c
 	var chain []*x509.Certificate
-	for _, c := range x5c {
+	for _, c := range hdr.X5c {
 		der, err := base64.StdEncoding.DecodeString(c)
 		if err != nil {
 			return nil, fmt.Errorf("invalid x5c: %w", err)
@@ -331,27 +358,49 @@ func (l *LoadedLoTE) AuthenticateRelyingParty(requestObject, clientID string) (*
 	}
 	leaf := chain[0]
 
-	// WRPAC profile checks
-	if leaf.IsCA {
-		return nil, fmt.Errorf("access certificate must be an end-entity certificate")
+	// the request object must be signed with the certificate's key, and the certificate must be
+	// the client_id's (x509_san_dns) - otherwise the request is not authentic at all
+	jws, err := jose.ParseSigned(requestObject, []jose.SignatureAlgorithm{jose.ES256, jose.ES384, jose.ES512, jose.PS256, jose.RS256})
+	if err != nil {
+		return nil, fmt.Errorf("invalid request object: %w", err)
 	}
-	if leaf.KeyUsage&x509.KeyUsageDigitalSignature == 0 {
-		return nil, fmt.Errorf("access certificate lacks digitalSignature key usage")
-	}
-	if leaf.Subject.String() == leaf.Issuer.String() {
-		return nil, fmt.Errorf("access certificate must not be self-signed")
-	}
-	policy := ""
-	for _, p := range leaf.Policies {
-		if slices.Contains(wrpacPolicies, p.String()) {
-			policy = p.String()
-		}
-	}
-	if policy == "" {
-		return nil, fmt.Errorf("access certificate has no ETSI TS 119 411-8 WRPAC policy")
+	if _, err := jws.Verify(leaf.PublicKey); err != nil {
+		return nil, fmt.Errorf("request object is not signed by its x5c certificate: %w", err)
 	}
 	if dns, ok := strings.CutPrefix(clientID, "x509_san_dns:"); !ok || !slices.Contains(leaf.DNSNames, dns) {
 		return nil, fmt.Errorf("client_id %q does not match the access certificate SAN", clientID)
+	}
+
+	rp := &RelyingParty{CommonName: leaf.Subject.CommonName, chain: chain}
+	if len(leaf.Subject.Organization) > 0 {
+		rp.Organization = leaf.Subject.Organization[0]
+	}
+	for _, n := range leaf.Subject.Names {
+		if n.Type.String() == oidOrganizationIdentifer {
+			rp.OrganizationIdentifier = fmt.Sprint(n.Value)
+		}
+	}
+	untrusted := func(format string, args ...any) (*RelyingParty, error) {
+		return rp, &UntrustedRPError{Reason: fmt.Errorf(format, args...)}
+	}
+
+	// WRPAC profile checks
+	if leaf.IsCA {
+		return untrusted("access certificate must be an end-entity certificate")
+	}
+	if leaf.KeyUsage&x509.KeyUsageDigitalSignature == 0 {
+		return untrusted("access certificate lacks digitalSignature key usage")
+	}
+	if leaf.Subject.String() == leaf.Issuer.String() {
+		return untrusted("access certificate is self-signed")
+	}
+	for _, p := range leaf.Policies {
+		if slices.Contains(wrpacPolicies, p.String()) {
+			rp.Policy = p.String()
+		}
+	}
+	if rp.Policy == "" {
+		return untrusted("access certificate has no ETSI TS 119 411-8 WRPAC policy")
 	}
 
 	// certification path up to a LoTE trust anchor (intermediates from x5c)
@@ -365,22 +414,10 @@ func (l *LoadedLoTE) AuthenticateRelyingParty(requestObject, clientID string) (*
 		KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("access certificate is not issued by a WRPAC provider in the LoTE: %w", err)
+		return untrusted("access certificate is not issued by a WRPAC provider in the LoTE: %w", err)
 	}
 	anchor := paths[0][len(paths[0])-1]
-	rp := &RelyingParty{
-		CommonName: leaf.Subject.CommonName,
-		Policy:     policy,
-		AccessCA:   anchor.Subject.CommonName,
-	}
-	if len(leaf.Subject.Organization) > 0 {
-		rp.Organization = leaf.Subject.Organization[0]
-	}
-	for _, n := range leaf.Subject.Names {
-		if n.Type.String() == oidOrganizationIdentifer {
-			rp.OrganizationIdentifier = fmt.Sprint(n.Value)
-		}
-	}
+	rp.AccessCA = anchor.Subject.CommonName
 	for _, a := range l.Anchors {
 		if a.Cert.Equal(anchor) {
 			rp.AccessCAEntity = a.EntityName

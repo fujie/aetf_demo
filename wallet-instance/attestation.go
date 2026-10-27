@@ -183,6 +183,11 @@ func (i *Instance) RefreshAttestation() error {
 
 // EnsureAttestation refreshes the attestation if missing or about to expire.
 func (i *Instance) EnsureAttestation() error {
+	if i.state.DemoUnregistered {
+		i.warn(M("未登録ウォレットとして動作中 (デモ)", "Acting as an unregistered wallet (demo)"),
+			M("Wallet Attestation を送りません。Issuer・Verifier は拒否するはずです", "No Wallet Attestation is sent; Issuers and Verifiers should reject the wallet"))
+		return nil
+	}
 	if i.state.WalletAttestation != "" {
 		if tok, err := jwt.ParseSigned(i.state.WalletAttestation, []jose.SignatureAlgorithm{jose.ES256}); err == nil {
 			var c jwt.Claims
@@ -239,9 +244,13 @@ type attestationTransport struct {
 }
 
 func (t *attestationTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	// form POSTs (OID4VCI token request, OID4VP direct_post) and JSON POSTs (OID4VCI credential
+	// request): the Issuer verifies the attestation again when issuing the credential
+	ct := req.Header.Get("Content-Type")
+	_, isCredentialEndpoint := t.inst.credentialEndpoints.Load(req.URL.Scheme + "://" + req.URL.Host + req.URL.Path)
 	if req.Method == http.MethodPost &&
-		strings.HasPrefix(req.Header.Get("Content-Type"), "application/x-www-form-urlencoded") &&
-		t.inst.state.WalletAttestation != "" {
+		(strings.HasPrefix(ct, "application/x-www-form-urlencoded") || (strings.HasPrefix(ct, "application/json") && isCredentialEndpoint)) &&
+		t.inst.state.WalletAttestation != "" && !t.inst.state.DemoUnregistered {
 		aud := req.URL.Scheme + "://" + req.URL.Host
 		pop, err := signJWT(t.inst.instanceKey, attestationPopTyp, map[string]any{
 			"iss": t.inst.state.WalletInstanceID,

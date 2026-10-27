@@ -62,6 +62,7 @@ Issuer の Offer 画面と Verifier のリクエスト画面にある **「Web W
 7. 学認SP と InCommon SP に機関IdPでログイン (InCommon SP には eduGAIN 経由で最小限の属性のみ送信)
 8. Trust Chain Visualizer で信頼チェーンの解決過程を図で確認
 9. フェデレーション設定で信頼関係を壊し、発行・提示・ログインが拒否されることを確認 (「すべて初期状態に戻す」で復旧)
+10. Web Wallet の「デモ: 未登録ウォレット」をオン → Issuer が発行を拒否、Verifier が提示を拒否。Verifier の「Trust List 未掲載の証明書で提示リクエストを作成」→ ウォレットが警告し、同意した場合だけ提示
 
 補足:
 
@@ -113,10 +114,10 @@ OpenID Federation 部分は `src/federation/` (TypeScript) と `wallet-instance/
 
 | シナリオ | 実装 |
 | --- | --- |
-| Issuer/Verifier が Wallet を信頼するために、Wallet Instance が提示する Wallet Attestation を Wallet Provider の公開鍵で検証する | Wallet Instance は OID4VCI の token request と OID4VP の direct_post に `OAuth-Client-Attestation` / `OAuth-Client-Attestation-PoP` ヘッダ (draft-ietf-oauth-attestation-based-client-auth) を付与。Issuer の `/token` と Verifier の `/callback` で検証 (`src/common/wallet-attestation.ts`) |
+| Issuer/Verifier が Wallet を信頼するために、Wallet Instance が提示する Wallet Attestation を Wallet Provider の公開鍵で検証する | Wallet Instance は OID4VCI の token request と OID4VP の direct_post に `OAuth-Client-Attestation` / `OAuth-Client-Attestation-PoP` ヘッダ (draft-ietf-oauth-attestation-based-client-auth) を付与。Issuer の `/token` と Verifier の `/callback` で検証 (`src/common/wallet-attestation.ts`)。Issuer はクレデンシャル発行時 (`/credentials`) にも Attestation と PoP を再検証し、Token を取得した Wallet Instance と同一であることを確認。検証できない (Wallet Provider に登録されていない) Wallet にはクレデンシャルを発行せず、Verifier はその Wallet からの提示を拒否 |
 | その際、Wallet Provider の正当性を OpenID Federation で検証する (Wallet Provider は複数存在してもよい) | Attestation の `iss` から Trust Chain を解決し、`wallet_provider` メタデータの `jwks` で署名検証。Wallet Provider を固定せず、Trust Anchor に繋がる任意の Wallet Provider を受け入れる |
 | (追加) Wallet Instance の停止・失効・再有効化 | Wallet Provider は Wallet Attestation に Token Status List の参照 (`status.status_list`) を入れ (EUDI の Wallet Unit Attestation と同様)、一時停止で SUSPENDED、失効で INVALID にする。一時停止からの再有効化は同じエントリを VALID に戻し、失効からの再有効化は INVALID が終端状態のため新しいエントリを割り当てて以後の Attestation に使う (失効前の Attestation は無効のまま)。Issuer・Verifier は Attestation 検証時に状態を確認し、Wallet は使用前に保持中の Attestation の状態を確認して必要なら再取得 |
-| Wallet が Verifier を信頼するために Trust List を照会する | EUDI ARF 6.6.3.2 に従い、Wallet は WRPAC Providers LoTE (ETSI TS 119 602) から Access CA のトラストアンカーを取得し、Verifier が Request Object の `x5c` に入れたアクセス証明書 (ETSI TS 119 411-8) をプロファイル検査・パス検証。トラストアンカーは **vcknots の `X509TrustChainRoots`** に渡し、署名・パス・CRL による失効確認も vcknots が実施 (`wallet-instance/trustlist.go`) |
+| Wallet が Verifier を信頼するために Trust List を照会する | EUDI ARF 6.6.3.2 に従い、Wallet は WRPAC Providers LoTE (ETSI TS 119 602) から Access CA のトラストアンカーを取得し、Verifier が Request Object の `x5c` に入れたアクセス証明書 (ETSI TS 119 411-8) をプロファイル検査・パス検証。トラストアンカーは **vcknots の `X509TrustChainRoots`** に渡し、署名・パス・CRL による失効確認も vcknots が実施 (`wallet-instance/trustlist.go`)。**Trust List に掲載されていない Verifier** (アクセス証明書が LoTE の Access CA までたどれない・WRPAC プロファイルでない) には警告を表示し、ユーザーが「理解した上で提示する」に同意した場合のみ提示 (その要求に限り x5c の証明書自体を信頼して署名を検証)。リクエストの署名不正・client_id と証明書の不一致、CRL で失効した証明書 (Registrar で停止された Verifier) は従来どおり拒否 |
 | その際、Trust List の正当性を OpenID Federation で検証する | Trust List 提供者 (LoTE Scheme Operator) の Trust Chain を解決し、LoTE の所在 (`lote_locations`) と署名鍵 (`jwks`) を取得。LoTE の JAdES 署名の `x5c` 証明書の鍵がこの鍵と一致することを確認して検証 |
 | Verifier は Credential の失効確認を Status List へ照会して行う | Issuer は発行時に Status List から index を割り当て、SD-JWT VC の (非選択開示の) `status.status_list` (`idx`, `uri`) に埋め込む。Verifier は draft の Validation Rules に従って Status List Token を取得・検証し、VALID / INVALID / SUSPENDED を判定 ([下記](#token-status-list-draft-ietf-oauth-status-list)) |
 | その際、Status List の正当性を OpenID Federation で検証する | Status List Token の `iss` (Status Issuer) の Trust Chain を解決し、`status_list_provider.jwks` で署名検証 (draft の Key Resolution and Trust Management を本エコシステム向けに規定) |
@@ -330,6 +331,8 @@ go build -o wallet-instance .
 ./wallet-instance present 'openid4vp:?client_id=x509_san_dns%3Alocalhost&request_uri=...'
 # 開示するクレームを指定する場合 (既定は DCQL で要求されたクレーム)
 ./wallet-instance present '<uri>' --claims given_name,enrollment_status
+# Trust List に掲載されていない Verifier に提示する場合は明示的に指定 (指定しないと警告を出して中止)
+./wallet-instance present '<uri>' --allow-untrusted
 ```
 
 ### 5. 失効・不正系の確認
@@ -337,6 +340,8 @@ go build -o wallet-instance .
 - 一時停止 / 再開 / 失効: <http://localhost:8720/admin> で「一時停止 (SUSPENDED)」「再開 (VALID)」「失効 (INVALID)」→ 再提示すると Verifier が `SUSPENDED` / `INVALID` で拒否。
   Verifier は Status List Token を `ttl` (既定 10 秒) キャッシュするため、反映まで最大 `ttl` 秒かかります。`./wallet-instance list` でも Holder 側から状態を確認できます
 - Verifier の登録停止: <http://localhost:8731/> で「一時停止」(certificateHold) または「登録取消」(cessationOfOperation) → アクセス証明書が CRL で失効し、Wallet が提示を拒否。「再開」で復帰し、取消後は Verifier 画面の「Registrar へ登録 / 再登録」で新しいアクセス証明書が発行されます
+- Trust List 未掲載の Verifier: <http://localhost:8740/> の「Trust List 未掲載の証明書で提示リクエストを作成」(自己署名の証明書で署名) → Web Wallet は警告を表示し、チェックボックスで同意するまで「提示」できない。CLI は `--allow-untrusted` を付けた場合のみ提示
+- 未登録ウォレット: Web Wallet の「デモ: 未登録ウォレット」をオン (Wallet Attestation を送らない) → Issuer の `/token` が `invalid_client`、Verifier が `Wallet Attestation` で拒否
 - Wallet Attestation なし: `curl -X POST http://localhost:8720/token -d ...` は `invalid_client`
 - Wallet Instance の一時停止 / 失効 / 再有効化: <http://localhost:8730/> で操作 → Wallet Attestation が参照する Status List エントリが SUSPENDED / INVALID になり Issuer・Verifier が拒否 (反映は ttl の約 10 秒後)。「再有効化」で復帰 (失効からの場合は新しいエントリで Attestation を再発行)
 
@@ -420,7 +425,7 @@ PREFIX=mydemo LOCATION=eastasia ./deploy/azure/deploy.sh   # 名前・リージ�
 - LoTE の型・サービス種別 URI は ETSI の EU WRPAC Providers 用のものを流用 (`SchemeTerritory` は `JP`)。Registrar・Access CA・LoTE Provider は本来別主体だが、1 エンティティにまとめています
 - Registrar は RP の本人確認を行わず自動承認。登録証明書 (WRPRC) と「要求属性が登録範囲内か」の Wallet 側検査、OCSP、ETSI TS 119 612 (XML Trusted List / LOTL) は未実装
 - Wallet Provider は鍵アテステーション / アプリ完全性検証を行っていません。Status List の管理 API (Issuer → Status Issuer) は共有シークレットで保護。Status List Token は JWT 形式のみ (CWT 形式は未対応)
-- Verifier 応答への Wallet Attestation 付与は OID4VP 標準の範囲外 (本シナリオ用の拡張)
+- Verifier 応答と Credential リクエストへの Wallet Attestation 付与は標準の範囲外 (attestation-based client authentication は認可サーバーへのクライアント認証として定義されており、本シナリオ用の拡張)
 - Verifier は Trust List (アクセス証明書) で信頼される前提のため Federation には参加していません。client_id は `x509_san_dns:localhost` (Verifier は 1 つ)
 
 ### Federation メタデータの Entity Type (規格 / 独自)
